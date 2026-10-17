@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TicketPipe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M18 16h-6v32h6M46 16h6v32h-6' stroke='%23fff' stroke-width='5' fill='none'/%3E%3Crect x='24' y='29' width='16' height='6' fill='%23fff'/%3E%3C/svg%3E" />
+<script src="/vendor/marked.js"></script>
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --sunken: #F4F4F4;
+    --ink: #000000;
+    --muted: #6B6B6B;
+    --line: #E4E4E4;
+    --inv-bg: #000000;
+    --inv-ink: #FFFFFF;
+    --ok: #15803D;
+    --bad: #C2410C;
+    --mono: "IBM Plex Mono", "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Ubuntu, Cantarell, "Noto Sans", sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --sunken: #121212;
+      --ink: #FFFFFF;
+      --muted: #A1A1A1;
+      --line: #262626;
+      --inv-bg: #FFFFFF;
+      --inv-ink: #000000;
+      --ok: #4ADE80;
+      --bad: #FB923C;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  ::selection { background: var(--ink); color: var(--bg); }
+  .hidden { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  /* ---------- top bar ---------- */
+  .bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 24px; height: 60px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .wordmark { font: 600 16px/1 var(--mono); letter-spacing: -0.02em; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+  .wordmark b { font-weight: 600; }
+  .wordmark span { color: var(--muted); font-weight: 400; }
+  .bar .spacer { flex: 1; }
+  .conn { display: inline-flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--muted); margin-right: 12px; white-space: nowrap; }
+  .dot { width: 7px; height: 7px; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.demo { background: var(--ink); }
+  .nav { display: flex; gap: 0; border: 1px solid var(--ink); }
+  .nav button { font: 13px var(--mono); background: var(--bg); border: 0; padding: 7px 14px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+  .nav button + button { border-left: 1px solid var(--ink); }
+  .nav button:hover { background: var(--sunken); }
+  .nav button[aria-current="page"] { background: var(--inv-bg); color: var(--inv-ink); }
+  .nav svg { width: 14px; height: 14px; }
+
+  main { flex: 1; display: flex; justify-content: center; padding: 0 24px 48px; }
+  .view { width: 100%; max-width: 1000px; }
+
+  /* ---------- type ---------- */
+  h1, h2, h3 { font-family: var(--mono); letter-spacing: -0.03em; margin: 0; }
+  h1 { font-size: 34px; line-height: 1.15; font-weight: 600; margin-bottom: 10px; }
+  h2 { font-size: 20px; line-height: 1.3; font-weight: 600; margin-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .lede { color: var(--muted); margin: 0 0 26px; max-width: 60ch; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  code { font: 13px var(--mono); background: var(--sunken); padding: 1px 5px; }
+
+  /* ---------- controls ---------- */
+  .field { display: grid; gap: 6px; margin-bottom: 16px; }
+  .field > span { font: 13px var(--mono); }
+  input[type=text], input[type=password], input[type=url], select, textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 0; padding: 10px 12px; transition: border-color .12s; }
+  input:hover, select:hover, textarea:hover, input:focus, textarea:focus, select:focus { border-color: var(--ink); outline: none; }
+  input::placeholder, textarea::placeholder { color: var(--muted); opacity: .8; }
+  textarea { resize: vertical; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: 500 14px var(--mono);
+    padding: 11px 18px; cursor: pointer; border: 1px solid var(--ink); background: var(--bg); border-radius: 0; transition: background .12s, color .12s; }
+  .btn:hover { background: var(--inv-bg); color: var(--inv-ink); }
+  .btn.primary { background: var(--inv-bg); color: var(--inv-ink); }
+  .btn.primary:hover { background: var(--bg); color: var(--ink); }
+  .btn.big { padding: 14px 26px; font-size: 15px; }
+  .btn:disabled { opacity: .5; cursor: progress; }
+  .link { background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; font: inherit; }
+  .link:hover { text-decoration-thickness: 2px; }
+
+  .result { font: 13px/1.5 var(--mono); margin: 12px 0 0; display: flex; gap: 10px; align-items: flex-start; }
+  .result.ok { color: var(--ok); } .result.bad { color: var(--bad); }
+  .result::before { content: ""; flex: none; width: 7px; height: 7px; margin-top: 6px; background: currentColor; }
+  .result:empty { display: none; }
+
+  .notice { border: 1px solid var(--ink); padding: 12px 14px; font-size: 14px; display: flex; gap: 12px; align-items: flex-start; }
+  .notice.bad { border-color: var(--bad); }
+  .notice .grow { flex: 1; }
+
+  .seg { display: inline-flex; border: 1px solid var(--ink); }
+  .seg label { position: relative; }
+  .seg label + label { border-left: 1px solid var(--ink); }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg span { display: block; padding: 7px 13px; cursor: pointer; font: 13px var(--mono); }
+  .seg span:hover { background: var(--sunken); }
+  .seg input:checked + span { background: var(--inv-bg); color: var(--inv-ink); }
+  .seg input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .choices { display: grid; gap: 0; margin-bottom: 18px; border: 1px solid var(--line); }
+  .choice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; background: var(--bg); cursor: pointer; border-bottom: 1px solid var(--line); }
+  .choices .choice:last-child { border-bottom: 0; }
+  .choice:hover { background: var(--sunken); }
+  .choice input { margin-top: 5px; accent-color: var(--ink); }
+  .choice:has(input:checked) { background: var(--sunken); box-shadow: inset 3px 0 0 var(--ink); }
+  .choice b { display: block; font: 600 14px var(--mono); }
+  .choice small { color: var(--muted); font-size: 13px; }
+  [data-presets] { grid-template-columns: 1fr 1fr; }
+  [data-presets] .choice { border-bottom: 1px solid var(--line); }
+  [data-presets] .choice:nth-child(odd) { border-right: 1px solid var(--line); }
+  [data-presets] .choice:nth-last-child(-n+2) { border-bottom: 0; }
+  details.adv summary { cursor: pointer; color: var(--muted); font: 12px var(--mono); margin-bottom: 10px; }
+
+  /* ---------- setup ---------- */
+  .setup { display: grid; grid-template-columns: 220px 1fr; gap: 48px; padding-top: 40px; }
+  .steps { list-style: none; margin: 18px 0 0; padding: 0; counter-reset: s; display: grid; gap: 2px; align-content: start; }
+  .steps li { counter-increment: s; display: flex; gap: 12px; align-items: center; padding: 9px 0; color: var(--muted); font: 13px var(--mono); }
+  .steps li::before { content: counter(s); width: 24px; height: 24px; display: grid; place-items: center; font-size: 12px; border: 1px solid var(--line); flex: none; }
+  .steps li.on { color: var(--ink); }
+  .steps li.on::before { border-color: var(--ink); background: var(--inv-bg); color: var(--inv-ink); }
+  .steps li.done::before { content: "✓"; border-color: var(--ink); color: var(--ink); }
+  .panel { border: 1px solid var(--ink); padding: 30px; }
+  .panel-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; gap: 12px; flex-wrap: wrap; }
+  .saved { font: 12px var(--mono); color: var(--ok); }
+
+  /* ---------- ask (ticket + quick fix) ---------- */
+  .ask { max-width: 680px; margin: 0 auto; padding-top: 9vh; }
+  .ask h1 { font-size: 40px; }
+  .prompt { position: relative; }
+  .prompt::before { content: ">"; position: absolute; left: 16px; top: 15px; font: 600 17px var(--mono); }
+  .ask textarea { font-size: 17px; padding: 14px 16px 14px 36px; min-height: 120px; border-color: var(--ink); }
+  .ask .controls { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 16px; flex-wrap: wrap; }
+  .lookback { display: flex; align-items: center; gap: 10px; color: var(--muted); font: 13px var(--mono); }
+  .privacy { display: flex; gap: 10px; color: var(--muted); font-size: 13px; margin-top: 32px; align-items: flex-start; max-width: 62ch; }
+  .privacy svg { flex: none; width: 15px; height: 15px; margin-top: 2px; }
+  .switch-mode { margin-top: 12px; font-size: 14px; color: var(--muted); }
+
+  /* ---------- working ---------- */
+  .working { max-width: 560px; margin: 0 auto; padding-top: 14vh; }
+  .progress { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 14px; font: 14px var(--mono); }
+  .progress li { display: flex; gap: 14px; align-items: center; color: var(--muted); }
+  .progress li .mark { width: 18px; flex: none; text-align: center; }
+  .progress li .mark::before { content: "·"; }
+  .progress li.on { color: var(--ink); }
+  .progress li.on .mark::before { content: "⠋"; animation: braille 0.8s steps(1) infinite; }
+  .progress li.done { color: var(--ink); }
+  .progress li.done .mark::before { content: "✓"; }
+  @keyframes braille { 0% { content: "⠋"; } 12% { content: "⠙"; } 25% { content: "⠹"; } 37% { content: "⠸"; } 50% { content: "⠼"; } 62% { content: "⠴"; } 75% { content: "⠦"; } 87% { content: "⠧"; } }
+
+  /* ---------- review: the ticket ---------- */
+  .review { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 28px; align-items: start; padding-top: 32px; }
+  .ticket { border: 1px solid var(--ink); background: var(--bg); animation: rise .4s cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes rise { from { transform: translateY(12px); opacity: 0; } }
+  .ticket-head { background: var(--inv-bg); color: var(--inv-ink); display: flex; align-items: center; gap: 14px; padding: 12px 20px; font: 13px var(--mono); flex-wrap: wrap; }
+  .ticket-head .kind { font-weight: 600; }
+  .sev { display: inline-flex; align-items: center; gap: 8px; border: 1px solid currentColor; padding: 3px 10px; }
+  .sev select { background: var(--inv-bg); color: var(--inv-ink); border: 0; padding: 0; width: auto; font: 13px var(--mono); cursor: pointer; }
+  .sev select:hover { border: 0; }
+  .ticket-head .meta { margin-left: auto; opacity: .75; }
+  .perf { height: 0; border-top: 1px dashed var(--ink); margin: 0 12px; }
+  .ticket-body { padding: 22px 28px 28px; }
+  .title-input { font: 600 22px/1.3 var(--mono); letter-spacing: -0.03em; border: 1px solid transparent !important; background: transparent !important;
+    padding: 6px 8px; margin: 0 -8px 2px; width: calc(100% + 16px); resize: none; overflow: hidden; display: block; }
+  .title-input:hover, .title-input:focus { border-color: var(--line) !important; }
+  .why { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+  .tools { display: flex; justify-content: flex-end; margin-bottom: 4px; font: 12px var(--mono); }
+
+  .doc { max-width: 72ch; }
+  .doc h2 { font-size: 13px; margin: 24px 0 8px; font-weight: 600; text-transform: none; }
+  .doc h2::before { content: "# "; color: var(--muted); }
+  .doc p, .doc li { margin: 0 0 6px; }
+  .doc ul, .doc ol { padding-left: 20px; margin: 0 0 8px; }
+  .doc table { border-collapse: collapse; margin: 8px 0 4px; font-size: 14px; }
+  .doc thead { display: none; }
+  .doc tbody tr:first-child { display: none; } /* severity: shown in the ticket header */
+  .doc td { padding: 3px 18px 3px 0; vertical-align: top; }
+  .doc td:first-child { color: var(--muted); font: 13px var(--mono); }
+  .doc td strong { font-weight: 400; }
+  .doc pre { background: var(--sunken); padding: 10px 12px; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 var(--mono); margin: 0 0 8px; border-left: 2px solid var(--ink); }
+  .doc code { padding: 0 4px; }
+  .doc hr { border: 0; border-top: 1px solid var(--line); margin: 26px 0 12px; }
+  .doc sub { color: var(--muted); font-size: 12px; vertical-align: baseline; }
+  .mask { background: var(--ink); color: var(--bg); padding: 0 6px; font: 11px/1.6 var(--mono); white-space: nowrap; }
+  #bodyEdit { min-height: 440px; font: 13px/1.6 var(--mono); }
+
+  .aside { position: sticky; top: 16px; display: grid; gap: 0; border: 1px solid var(--line); }
+  .aside .box { padding: 18px; }
+  .aside .box + .box { border-top: 1px solid var(--line); }
+  .facts { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 7px; font-size: 13px; }
+  .facts li { display: flex; justify-content: space-between; gap: 12px; }
+  .facts li span:first-child { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .facts li span:last-child { text-align: right; }
+  .masked-big { display: flex; align-items: baseline; gap: 10px; margin-top: 4px; }
+  .masked-big strong { font: 600 32px/1 var(--mono); }
+  .send { display: grid; gap: 8px; }
+  .send .btn { width: 100%; }
+  .seen { margin-top: 10px; max-height: 320px; overflow: auto; background: var(--sunken); padding: 10px; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+  /* ---------- quick fix result ---------- */
+  .fix { max-width: 680px; margin: 0 auto; padding-top: 6vh; }
+  .verdict { display: inline-block; font: 12px var(--mono); border: 1px solid var(--ink); padding: 3px 10px; margin-bottom: 18px; }
+  .verdict.it { background: var(--inv-bg); color: var(--inv-ink); }
+  .diag { font-size: 17px; margin: 0 0 24px; }
+  .checklist { list-style: none; padding: 0; margin: 0 0 28px; border: 1px solid var(--ink); counter-reset: c; }
+  .checklist li { counter-increment: c; border-bottom: 1px solid var(--line); }
+  .checklist li:last-child { border-bottom: 0; }
+  .checklist label { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; cursor: pointer; }
+  .checklist label:hover { background: var(--sunken); }
+  .checklist label::before { content: counter(c); font: 600 13px var(--mono); width: 18px; flex: none; margin-top: 2px; }
+  .checklist input { margin-top: 5px; accent-color: var(--ink); width: 16px; height: 16px; flex: none; order: 2; margin-left: auto; }
+  .checklist li:has(input:checked) span { color: var(--muted); text-decoration: line-through; }
+  .fix .row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* ---------- done ---------- */
+  .done { max-width: 600px; margin: 0 auto; padding-top: 14vh; }
+  .done .tick { font: 600 15px var(--mono); display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--ink); padding: 6px 12px; margin-bottom: 22px; animation: rise .4s both; }
+  .done .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .path { font: 13px var(--mono); background: var(--sunken); padding: 2px 6px; word-break: break-all; }
+
+  /* ---------- settings ---------- */
+  dialog { border: 1px solid var(--ink); border-radius: 0; padding: 0; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); background: var(--bg); color: var(--ink); }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  .dlg-head { display: flex; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--ink); position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  .dlg-head h2 { margin: 0; flex: 1; }
+  .x { background: none; border: 1px solid transparent; font: 16px var(--mono); padding: 2px 8px; cursor: pointer; }
+  .x:hover { border-color: var(--ink); }
+  .dlg-body { padding: 4px 24px 24px; }
+  .dlg-body section { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .dlg-body section:last-child { border-bottom: 0; }
+  .dlg-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--ink); position: sticky; bottom: 0; background: var(--bg); }
+  .switch { display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: 14px; margin: 10px 0 16px; }
+  .switch input { width: 16px; height: 16px; accent-color: var(--ink); }
+
+  @media (max-width: 800px) {
+    .setup, .review { grid-template-columns: 1fr; }
+    [data-presets] { grid-template-columns: 1fr; }
+    [data-presets] .choice:nth-child(odd) { border-right: 0; }
+    [data-presets] .choice:nth-last-child(2) { border-bottom: 1px solid var(--line); }
+    .aside { position: static; }
+    .ask h1 { font-size: 30px; }
+    .bar { padding: 10px 16px; height: auto; } main { padding: 0 16px 32px; }
+    .conn { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <button class="wordmark" id="home" aria-label="TicketPipe home">[ <b>ticketpipe</b> ]</button>
+  <div class="spacer"></div>
+  <span class="conn" id="conn"><span class="dot" id="connDot"></span><span id="connText">checking screenpipe…</span></span>
+  <nav class="nav" aria-label="Main">
+    <button id="navTicket" data-nav="ticket">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"/></svg>new ticket</button>
+    <button id="navFix" data-nav="fix">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>quick fix</button>
+    <button id="navSettings" data-nav="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>settings</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ======================= SETUP ======================= -->
+  <section class="view hidden" id="v-setup">
+    <div class="setup">
+      <div>
+        <h2>Set up TicketPipe</h2>
+        <p class="hint">Takes about a minute. Saved on this computer, you only do it once.</p>
+        <ol class="steps" id="steps">
+          <li data-step="0">connect screenpipe</li>
+          <li data-step="1">choose an AI</li>
+          <li data-step="2">where tickets go</li>
+        </ol>
+        <p class="hint" style="margin-top:22px">Just looking? <button class="link" id="tryDemo">Try a sample incident</button></p>
+      </div>
+
+      <div class="panel">
+        <div class="step" data-step="0">
+          <h2>Connect screenpipe</h2>
+          <p class="lede">TicketPipe reads what screenpipe recorded on this computer, so nobody has to describe a bug from memory.</p>
+          <button class="btn" data-detect>Find my screenpipe key</button>
+          <p class="result" data-result="detect"></p>
+          <label class="field" style="margin-top:20px"><span>or paste the screenpipe API key</span>
+            <input type="password" data-k="screenpipeApiKey" data-secret autocomplete="off" placeholder="sp-…" />
+          </label>
+          <p class="hint">In the screenpipe app: Settings › Privacy. In a terminal: <code>screenpipe auth token</code>.</p>
+          <details class="adv" style="margin-top:16px"><summary>advanced</summary>
+            <label class="field"><span>screenpipe address</span><input type="url" data-k="screenpipeUrl" /></label>
+          </details>
+          <button class="btn" data-test="screenpipe">Test connection</button>
+          <p class="result" data-result="screenpipe"></p>
+        </div>
+
+        <div class="step hidden" data-step="1">
+          <h2>Choose an AI</h2>
+          <p class="lede">The AI writes the ticket. Passwords, keys and personal data are masked on this computer before anything is sent.</p>
+          <div class="choices" data-presets></div>
+          <div data-keyblock>
+            <label class="field"><span>API key</span><input type="password" data-k="llmApiKey" data-secret autocomplete="off" /></label>
+            <p class="hint" data-keyhelp style="margin:-8px 0 14px"></p>
+          </div>
+          <details class="adv"><summary>advanced</summary>
+            <label class="field"><span>model</span><input type="text" data-k="llmModel" /></label>
+            <label class="field" data-baseurl><span>API address</span><input type="url" data-k="llmBaseUrl" /></label>
+          </details>
+          <button class="btn" data-test="ai">Test the AI</button>
+          <p class="result" data-result="ai"></p>
+        </div>
+
+        <div class="step hidden" data-step="2">
+          <h2>Where should tickets go?</h2>
+          <p class="lede">You always review a ticket before it is sent.</p>
+          <div class="choices">
+            <label class="choice"><input type="radio" name="dest" value="folder" data-dest />
+              <span><b>Save them on this computer</b><small data-folder></small></span></label>
+            <label class="choice"><input type="radio" name="dest" value="github" data-dest />
+              <span><b>Create GitHub issues</b><small>For teams that track IT requests in a GitHub repository.</small></span></label>
+          </div>
+          <div data-github class="hidden">
+            <label class="field"><span>repository</span><input type="text" data-k="githubRepo" placeholder="your-org/it-support" /></label>
+            <label class="field"><span>GitHub token</span><input type="password" data-k="githubToken" data-secret autocomplete="off" placeholder="github_pat_…" /></label>
+            <p class="hint">A fine-grained token with <b>Issues: Read and write</b> on that repository. <button class="link" data-open="https://github.com/settings/personal-access-tokens/new">Create a token</button></p>
+            <button class="btn" data-test="github" style="margin-top:14px">Test GitHub</button>
+            <p class="result" data-result="github"></p>
+          </div>
+        </div>
+
+        <div class="panel-foot">
+          <button class="btn" id="back">Back</button>
+          <button class="btn primary" id="next">Continue</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= ASK (shared by ticket + quick fix) ======================= -->
+  <section class="view hidden" id="v-ask">
+    <div class="ask">
+      <div class="notice hidden" id="demoBanner" style="margin-bottom:30px">
+        <span class="grow">Sample incident mode: answers are based on a recorded VPN failure, not on your screen.</span>
+        <button class="link" id="leaveDemo">Use my screen</button>
+      </div>
+      <h1 id="askTitle">What went wrong?</h1>
+      <p class="lede" id="askLede">A few words are enough. Your computer already saw the rest.</p>
+      <div class="prompt"><textarea id="note" rows="3" aria-labelledby="askTitle" placeholder="I can't connect to the VPN since this morning"></textarea></div>
+      <div class="controls">
+        <div class="lookback">look back
+          <div class="seg" role="radiogroup" aria-label="Look back">
+            <label><input type="radio" name="min" value="5" /><span>5m</span></label>
+            <label><input type="radio" name="min" value="15" checked /><span>15m</span></label>
+            <label><input type="radio" name="min" value="30" /><span>30m</span></label>
+            <label><input type="radio" name="min" value="60" /><span>1h</span></label>
+          </div>
+        </div>
+        <button class="btn primary big" id="go">Create ticket</button>
+      </div>
+      <p class="switch-mode" id="switchMode"></p>
+      <div class="notice bad hidden" id="askError" style="margin-top:20px">
+        <span class="grow" id="askErrorText"></span>
+        <button class="link" id="errorSettings">Open settings</button>
+      </div>
+      <p class="privacy">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span id="privacyText">Nothing is sent until you review the ticket. Passwords, keys, emails and card numbers are masked on this computer first.</span>
+      </p>
+    </div>
+  </section>
+
+  <!-- ======================= WORKING ======================= -->
+  <section class="view hidden" id="v-working">
+    <div class="working">
+      <h2 id="workTitle">Writing your ticket</h2>
+      <ol class="progress" id="progress">
+        <li><span class="mark"></span><span id="p0">reading the last 15 minutes of your screen</span></li>
+        <li><span class="mark"></span><span>masking passwords and personal data</span></li>
+        <li><span class="mark"></span><span id="p2">writing a clear ticket for IT</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ======================= REVIEW ======================= -->
+  <section class="view hidden" id="v-review">
+    <div class="review">
+      <article class="ticket" aria-label="Ticket draft">
+        <div class="ticket-head">
+          <span class="kind">ticket</span>
+          <span class="sev" title="Chosen by the AI. Click to change.">severity
+            <select id="severity" aria-label="Severity">
+              <option value="low">low</option><option value="medium">medium</option>
+              <option value="high">high</option><option value="critical">critical</option>
+            </select>
+          </span>
+          <span class="meta" id="tagMeta"></span>
+        </div>
+        <div class="perf"></div>
+        <div class="ticket-body">
+          <textarea class="title-input" id="title" rows="1" aria-label="Ticket title"></textarea>
+          <p class="why" id="why"></p>
+          <div class="tools"><button class="link" id="toggleEdit">edit text</button></div>
+          <div class="doc" id="preview"></div>
+          <textarea id="bodyEdit" class="hidden" aria-label="Ticket text (Markdown)"></textarea>
+        </div>
+      </article>
+
+      <aside class="aside">
+        <div class="box send">
+          <h3>Ready to send?</h3>
+          <p class="hint" style="margin:0 0 10px">Check the title and details. You can edit anything.</p>
+          <button class="btn primary" id="send">Send to IT</button>
+          <button class="btn" id="redo">Start over</button>
+          <p class="result" id="sendError"></p>
+        </div>
+        <div class="box">
+          <h3>Kept private</h3>
+          <div class="masked-big"><strong id="maskedCount">0</strong><span class="hint" style="margin:0" id="maskedLabel">items masked before the AI saw them</span></div>
+          <ul class="facts" id="facts"></ul>
+          <details style="margin-top:12px"><summary class="hint" style="cursor:pointer">See exactly what the AI received</summary>
+            <div class="seen" id="seen"></div>
+          </details>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================= QUICK FIX RESULT ======================= -->
+  <section class="view hidden" id="v-fix">
+    <div class="fix">
+      <span class="verdict" id="verdict"></span>
+      <h1 id="fixTitle"></h1>
+      <p class="diag" id="diag"></p>
+      <ol class="checklist" id="checklist"></ol>
+      <div class="row" id="fixActions"></div>
+    </div>
+  </section>
+
+  <!-- ======================= DONE ======================= -->
+  <section class="view hidden" id="v-done">
+    <div class="done">
+      <span class="tick" id="doneTick">✓ sent</span>
+      <h1 id="doneTitle">Ticket sent</h1>
+      <p class="lede" id="doneText"></p>
+      <div class="row">
+        <button class="btn primary" id="doneOpen">Open ticket</button>
+        <button class="btn" id="another">Report another problem</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ======================= SETTINGS ======================= -->
+<dialog id="settings" aria-labelledby="settingsTitle">
+  <div class="dlg-head">
+    <h2 id="settingsTitle">Settings</h2>
+    <button class="x" id="settingsX" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <section>
+      <h3>Screen history</h3>
+      <p class="hint">Where TicketPipe reads what happened on your screen.</p>
+      <label class="switch"><input type="checkbox" data-k="demoMode" /> Use a sample incident instead of my screen</label>
+      <label class="field"><span>screenpipe API key</span><input type="password" data-k="screenpipeApiKey" data-secret autocomplete="off" /></label>
+      <label class="field"><span>screenpipe address</span><input type="url" data-k="screenpipeUrl" /></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" data-detect>Find my key</button>
+        <button class="btn" data-test="screenpipe">Test connection</button>
+      </div>
+      <p class="result" data-result="detect"></p>
+      <p class="result" data-result="screenpipe"></p>
+    </section>
+    <section>
+      <h3>AI</h3>
+      <p class="hint" style="margin-bottom:14px">The AI only receives masked text, never screenshots.</p>
+      <div class="choices" data-presets></div>
+      <div data-keyblock>
+        <label class="field"><span>API key</span><input type="password" data-k="llmApiKey" data-secret autocomplete="off" /></label>
+        <p class="hint" data-keyhelp style="margin:-8px 0 14px"></p>
+      </div>
+      <label class="field"><span>model</span><input type="text" data-k="llmModel" /></label>
+      <label class="field" data-baseurl><span>API address</span><input type="url" data-k="llmBaseUrl" /></label>
+      <button class="btn" data-test="ai">Test the AI</button>
+      <p class="result" data-result="ai"></p>
+    </section>
+    <section>
+      <h3>Tickets</h3>
+      <div class="choices" style="margin-top:12px">
+        <label class="choice"><input type="radio" name="dest2" value="folder" data-dest />
+          <span><b>Save them on this computer</b><small data-folder></small></span></label>
+        <label class="choice"><input type="radio" name="dest2" value="github" data-dest />
+          <span><b>Create GitHub issues</b><small>Needs a repository and a token.</small></span></label>
+      </div>
+      <div data-github class="hidden">
+        <label class="field"><span>repository</span><input type="text" data-k="githubRepo" placeholder="your-org/it-support" /></label>
+        <label class="field"><span>GitHub token</span><input type="password" data-k="githubToken" data-secret autocomplete="off" /></label>
+        <button class="btn" data-test="github">Test GitHub</button>
+        <p class="result" data-result="github"></p>
+      </div>
+      <label class="field" style="margin-top:18px"><span>language of tickets and fixes</span>
+        <select data-k="ticketLanguage">
+          <option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option>
+          <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="nl">Dutch</option>
+        </select>
+      </label>
+    </section>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" id="settingsCancel">Cancel</button>
+    <button class="btn primary" id="settingsSave">Save settings</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const api = async (path, body) => {
+  const res = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+};
+const openLink = (url) => api("/api/open", { target: url }).catch(() => window.open(url, "_blank"));
+
+// ------------------------------------------------------------ AI presets
+const PRESETS = [
+  { id: "gemini", label: "Google Gemini", note: "Free tier with a Google account", provider: "openai",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash",
+    keyUrl: "https://aistudio.google.com/apikey", keyText: "Get a free key in Google AI Studio" },
+  { id: "groq", label: "Groq", note: "Free tier, very fast", provider: "openai",
+    baseUrl: "https://api.groq.com/openai/v1", model: "openai/gpt-oss-120b",
+    keyUrl: "https://console.groq.com/keys", keyText: "Get a free key from Groq" },
+  { id: "anthropic", label: "Claude", note: "Paid, pay as you go", provider: "anthropic",
+    baseUrl: "", model: "claude-sonnet-5-5",
+    keyUrl: "https://console.anthropic.com/settings/keys", keyText: "Get a key from the Anthropic Console" },
+  { id: "openai", label: "OpenAI", note: "Paid, pay as you go", provider: "openai",
+    baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini",
+    keyUrl: "https://platform.openai.com/api-keys", keyText: "Get a key from OpenAI" },
+  { id: "local", label: "Local model", note: "Free with Ollama, nothing leaves this computer", provider: "openai",
+    baseUrl: "http://localhost:11434/v1", model: "llama3.2", noKey: true,
+    keyUrl: "https://ollama.com/download", keyText: "Install Ollama, then run: ollama pull llama3.2" },
+  { id: "demo", label: "Demo AI", note: "No account needed, basic answers", provider: "mock",
+    baseUrl: "", model: "demo", noKey: true },
+];
+const presetOf = (s) =>
+  PRESETS.find((p) => p.id === s.llmPreset) ||
+  (!s.llmApiKey && s.llmProvider !== "mock" ? PRESETS[0] : null) ||
+  (s.llmProvider === "mock" ? PRESETS[5] : s.llmProvider === "anthropic" ? PRESETS[2]
+   : /googleapis/.test(s.llmBaseUrl) ? PRESETS[0] : /groq/.test(s.llmBaseUrl) ? PRESETS[1]
+   : /localhost|127\.0\.0\.1/.test(s.llmBaseUrl) ? PRESETS[4] : PRESETS[3]);
+
+// ------------------------------------------------------------ forms (shared by setup + settings)
+let settings = {};
+
+function fillForm(root, s) {
+  $$("[data-k]", root).forEach((el) => {
+    const v = s[el.dataset.k];
+    if (el.type === "checkbox") el.checked = !!v;
+    else if (el.hasAttribute("data-secret")) {
+      // Secrets are never sent back to the page: show that one is saved, keep the field empty.
+      el.value = ""; delete el.dataset.clear;
+      el.placeholder = v ? `saved · ends in ${String(v).slice(-4)} · type to replace` : (el.dataset.ph ??= el.placeholder);
+    } else el.value = v ?? "";
+  });
+  const box = $("[data-presets]", root);
+  if (box && !box.children.length) {
+    const name = "preset-" + root.id;
+    box.innerHTML = PRESETS.map((p) =>
+      `<label class="choice"><input type="radio" name="${name}" value="${p.id}" /><span><b>${esc(p.label)}</b><small>${esc(p.note)}</small></span></label>`).join("");
+    $$("input", box).forEach((r) => r.addEventListener("change", () => applyPreset(root, r.value, true)));
+  }
+  const current = presetOf(s);
+  if (box) $(`input[value="${current.id}"]`, box).checked = true;
+  applyPreset(root, current.id, false);
+  const dest = s.githubRepo ? "github" : "folder";
+  $$("[data-dest]", root).forEach((r) => {
+    r.checked = r.value === dest;
+    r.onchange = () => $("[data-github]", root).classList.toggle("hidden", !(r.value === "github" && r.checked));
+  });
+  $("[data-github]", root)?.classList.toggle("hidden", dest !== "github");
+  $$("[data-folder]", root).forEach((el) => (el.textContent = `In ${s.ticketsDir}`));
+  $$("[data-result]", root).forEach((el) => { el.textContent = ""; el.className = "result"; });
+}
+
+function applyPreset(root, id, changed) {
+  const p = PRESETS.find((x) => x.id === id);
+  const key = $('[data-k="llmApiKey"]', root);
+  if (changed) {
+    $('[data-k="llmModel"]', root).value = p.model;
+    $('[data-k="llmBaseUrl"]', root).value = p.baseUrl;
+    const same = p.id === presetOf(settings).id;
+    key.value = "";
+    if (same) { delete key.dataset.clear; key.placeholder = settings.llmApiKey ? `saved · ends in ${settings.llmApiKey.slice(-4)} · type to replace` : ""; }
+    else { key.dataset.clear = "1"; key.placeholder = "paste your key"; }
+  }
+  $("[data-keyblock]", root).classList.toggle("hidden", !!p.noKey && p.id !== "local");
+  key.closest(".field").classList.toggle("hidden", !!p.noKey);
+  $("[data-baseurl]", root).classList.toggle("hidden", p.provider !== "openai");
+  $("[data-keyhelp]", root).innerHTML = p.keyUrl ? `<button class="link" type="button" data-open="${p.keyUrl}">${esc(p.keyText)}</button>` : "";
+}
+
+function readForm(root) {
+  const out = {};
+  $$("[data-k]", root).forEach((el) => {
+    if (el.type === "checkbox") return (out[el.dataset.k] = el.checked);
+    if (el.hasAttribute("data-secret")) {
+      if (el.value.trim()) out[el.dataset.k] = el.value.trim();   // replaced
+      else if (el.dataset.clear) out[el.dataset.k] = "";          // provider changed: old key no longer applies
+      return;                                                     // otherwise keep the saved one
+    }
+    out[el.dataset.k] = el.value;
+  });
+  const presetInput = $("[data-presets] input:checked", root);
+  if (presetInput) {
+    const p = PRESETS.find((x) => x.id === presetInput.value);
+    Object.assign(out, { llmPreset: p.id, llmProvider: p.provider });
+    if (p.noKey) out.llmApiKey = "";
+  }
+  if ($("[data-dest]:checked", root)?.value === "folder") Object.assign(out, { githubRepo: "", githubToken: "" });
+  return out;
+}
+
+async function saveFrom(root, extra = {}) {
+  settings = await api("/api/settings", { ...readForm(root), ...extra });
+  fillSecretsOnly(root);
+  return settings;
+}
+function fillSecretsOnly(root) {
+  $$("[data-secret]", root).forEach((el) => {
+    const v = settings[el.dataset.k];
+    el.value = ""; delete el.dataset.clear;
+    el.placeholder = v ? `saved · ends in ${String(v).slice(-4)} · type to replace` : (el.dataset.ph ?? "");
+  });
+}
+
+async function runTest(root, what, btn) {
+  const out = $(`[data-result="${what}"]`, root);
+  btn.disabled = true; out.className = "result"; out.textContent = "testing…";
+  try {
+    await saveFrom(root);
+    const r = await api(`/api/test/${what}`, {});
+    out.className = `result ${r.ok ? "ok" : "bad"}`; out.textContent = r.message;
+    refreshConnection();
+  } catch (e) { out.className = "result bad"; out.textContent = e.message; }
+  finally { btn.disabled = false; }
+}
+
+async function runDetect(root, btn) {
+  const out = $('[data-result="detect"]', root);
+  btn.disabled = true; out.className = "result"; out.textContent = "looking for screenpipe on this computer…";
+  try {
+    const r = await api("/api/detect/screenpipe", {});
+    out.className = `result ${r.ok ? "ok" : "bad"}`; out.textContent = r.message;
+    if (r.ok) { settings = r.settings; fillSecretsOnly(root); refreshConnection(); }
+  } catch (e) { out.className = "result bad"; out.textContent = e.message; }
+  finally { btn.disabled = false; }
+}
+
+document.addEventListener("click", (e) => {
+  const open = e.target.closest("[data-open]");
+  if (open) { e.preventDefault(); return openLink(open.dataset.open); }
+  const test = e.target.closest("[data-test]");
+  if (test) { e.preventDefault(); return runTest(test.closest("#v-setup, dialog"), test.dataset.test, test); }
+  const detect = e.target.closest("[data-detect]");
+  if (detect) { e.preventDefault(); return runDetect(detect.closest("#v-setup, dialog"), detect); }
+});
+
+// ------------------------------------------------------------ views + nav
+let mode = "ticket"; // "ticket" | "fix"
+function show(id) {
+  $$(".view").forEach((v) => v.classList.toggle("hidden", v.id !== id));
+  const inFix = ["v-fix"].includes(id) || (["v-ask", "v-working"].includes(id) && mode === "fix");
+  const inTicket = ["v-review", "v-done"].includes(id) || (["v-ask", "v-working"].includes(id) && mode === "ticket");
+  $("#navTicket").toggleAttribute("aria-current", inTicket); if (inTicket) $("#navTicket").setAttribute("aria-current", "page");
+  $("#navFix").toggleAttribute("aria-current", inFix); if (inFix) $("#navFix").setAttribute("aria-current", "page");
+  window.scrollTo(0, 0);
+}
+$("#navTicket").onclick = () => settings.onboarded ? ask("ticket") : null;
+$("#navFix").onclick = () => settings.onboarded ? ask("fix") : null;
+$("#navSettings").onclick = () => openSettings();
+$("#home").onclick = () => settings.onboarded && ask("ticket");
+
+async function refreshConnection() {
+  const dot = $("#connDot"), text = $("#connText");
+  if (settings.demoMode) { dot.className = "dot demo"; text.textContent = "sample incident"; return; }
+  try {
+    const r = await api("/api/test/screenpipe", {});
+    dot.className = `dot ${r.ok ? "ok" : "bad"}`;
+    text.textContent = r.ok ? (/recording/.test(r.message) ? "screenpipe recording" : "screenpipe connected") : "screenpipe not connected";
+    $("#conn").title = r.message;
+  } catch { dot.className = "dot bad"; text.textContent = "app not responding"; }
+}
+
+// ------------------------------------------------------------ setup wizard
+let step = 0;
+const setup = $("#v-setup");
+function goStep(n) {
+  step = n;
+  $$(".step", setup).forEach((s) => s.classList.toggle("hidden", +s.dataset.step !== n));
+  $$("#steps li").forEach((li) => { li.classList.toggle("on", +li.dataset.step === n); li.classList.toggle("done", +li.dataset.step < n); });
+  $("#back").style.visibility = n === 0 ? "hidden" : "visible";
+  $("#next").textContent = n === 2 ? "Finish setup" : "Continue";
+}
+$("#back").onclick = () => goStep(Math.max(0, step - 1));
+$("#next").onclick = async () => {
+  await saveFrom(setup, step === 2 ? { onboarded: true } : {});
+  if (step < 2) return goStep(step + 1);
+  ask("ticket");
+};
+$("#tryDemo").onclick = async () => {
+  const s = { demoMode: true, onboarded: true };
+  if (!settings.llmApiKey) Object.assign(s, { llmPreset: "demo", llmProvider: "mock", llmModel: "demo" });
+  settings = await api("/api/settings", s);
+  ask("ticket");
+};
+
+// ------------------------------------------------------------ ask
+const COPY = {
+  ticket: { title: "What went wrong?", lede: "A few words are enough. Your computer already saw the rest.",
+    go: "Create ticket", ph: "I can't connect to the VPN since this morning",
+    switch: 'Might be something simple? <button class="link" data-switch="fix">Try a quick fix first</button>',
+    privacy: "Nothing is sent until you review the ticket. Passwords, keys, emails and card numbers are masked on this computer first.",
+    work: "Writing your ticket", p2: "writing a clear ticket for IT" },
+  fix: { title: "Let's try to fix it.", lede: "Describe the problem. TicketPipe looks at your screen and suggests simple steps you can do yourself.",
+    go: "Find a fix", ph: "My printer stopped working",
+    switch: 'Need IT right away? <button class="link" data-switch="ticket">Create a ticket instead</button>',
+    privacy: "Passwords, keys, emails and card numbers are masked on this computer before the AI sees anything. Nothing is sent to IT.",
+    work: "Looking for a fix", p2: "finding steps you can try yourself" },
+};
+const minutes = () => +$('input[name="min"]:checked').value;
+function ask(m, keepNote = false) {
+  mode = m;
+  const c = COPY[m];
+  $("#askTitle").textContent = c.title; $("#askLede").textContent = c.lede; $("#go").textContent = c.go;
+  $("#note").placeholder = c.ph; $("#switchMode").innerHTML = c.switch; $("#privacyText").textContent = c.privacy;
+  if (!keepNote) $("#note").value = "";
+  $("#demoBanner").classList.toggle("hidden", !settings.demoMode);
+  const r = $(`input[name="min"][value="${settings.lookbackMinutes}"]`); if (r) r.checked = true;
+  $("#askError").classList.add("hidden");
+  refreshConnection();
+  show("v-ask");
+  $("#note").focus();
+}
+$("#switchMode").addEventListener("click", (e) => { const b = e.target.closest("[data-switch]"); if (b) ask(b.dataset.switch, true); });
+$("#leaveDemo").onclick = async () => { settings = await api("/api/settings", { demoMode: false }); ask(mode, true); };
+$("#errorSettings").onclick = () => openSettings();
+$("#note").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) go(); });
+$("#go").onclick = () => go();
+
+async function withProgress(task) {
+  const m = minutes();
+  $("#workTitle").textContent = COPY[mode].work;
+  $("#p2").textContent = COPY[mode].p2;
+  $("#p0").textContent = settings.demoMode ? "reading the sample incident" : `reading the last ${m === 60 ? "hour" : m + " minutes"} of your screen`;
+  const items = $$("#progress li");
+  items.forEach((li) => (li.className = ""));
+  show("v-working");
+  items[0].className = "on";
+  const t1 = setTimeout(() => { items[0].className = "done"; items[1].className = "on"; }, 1000);
+  const t2 = setTimeout(() => { items[1].className = "done"; items[2].className = "on"; }, 1900);
+  try {
+    const out = await task(m);
+    items.forEach((li) => (li.className = "done"));
+    await new Promise((r) => setTimeout(r, 300));
+    return out;
+  } catch (e) {
+    show("v-ask");
+    $("#askErrorText").textContent = e.message;
+    $("#askError").classList.remove("hidden");
+    throw e;
+  } finally { clearTimeout(t1); clearTimeout(t2); }
+}
+
+function go() { return mode === "fix" ? quickFix() : createTicket(); }
+
+// ------------------------------------------------------------ ticket
+let draft = null;
+async function createTicket(noteOverride) {
+  mode = "ticket";
+  const note = noteOverride ?? $("#note").value;
+  try { draft = await withProgress((m) => api("/api/draft", { minutes: m, note })); } catch { return; }
+  renderReview();
+}
+
+const maskify = (html) => html.replace(/\[REDACTED_([A-Z_]+)\]/g, (_, k) => `<span class="mask" title="Masked on this computer">${k.toLowerCase().replace(/_/g, " ")}</span>`);
+const hm = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
+const tz = () => { const m = -new Date().getTimezoneOffset(), a = Math.abs(m); return `UTC${m >= 0 ? "+" : "-"}${String(Math.floor(a / 60)).padStart(2, "0")}:${String(a % 60).padStart(2, "0")}`; };
+
+function renderPreview() {
+  const md = $("#bodyEdit").value;
+  $("#preview").innerHTML = maskify(window.marked ? marked.parse(md) : `<pre>${esc(md)}</pre>`);
+}
+function renderReview() {
+  const d = draft, st = d.stats;
+  $("#title").value = d.title;
+  fitTitle();
+  $("#severity").value = d.ticket.severity;
+  $("#why").textContent = d.ticket.severity_reason ? `Severity chosen by the AI: ${d.ticket.severity_reason}` : "Severity chosen by the AI.";
+  $("#bodyEdit").value = d.body;
+  $("#bodyEdit").classList.add("hidden"); $("#preview").classList.remove("hidden");
+  $("#toggleEdit").textContent = "edit text";
+  renderPreview();
+  $("#tagMeta").textContent = st.from ? `${hm(st.from)}–${hm(st.to)} ${tz()}` : "";
+  const total = Object.values(st.redactions).reduce((a, b) => a + b, 0);
+  $("#maskedCount").textContent = total;
+  $("#maskedLabel").textContent = total === 1 ? "item masked before the AI saw it" : "items masked before the AI saw them";
+  const kinds = Object.entries(st.redactions).map(([k, n]) => `${n} ${k.replace(/_/g, " ")}${n > 1 ? "s" : ""}`).join(", ");
+  const apps = st.apps.filter((a) => a !== "unknown");
+  $("#facts").innerHTML = [
+    kinds && ["masked", kinds],
+    ["screen moments", st.events],
+    apps.length && ["apps seen", apps.slice(0, 4).join(", ") + (apps.length > 4 ? ` +${apps.length - 4}` : "")],
+    ["source", st.source],
+    ["written by", st.llm],
+  ].filter(Boolean).map(([k, v]) => `<li><span>${esc(k)}</span><span>${esc(v)}</span></li>`).join("");
+  $("#seen").innerHTML = maskify(esc(d.contextSent));
+  $("#sendError").textContent = "";
+  show("v-review");
+  fitTitle();
+  requestAnimationFrame(() => window.scrollTo(0, 0));
+}
+function fitTitle() { const t = $("#title"); t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }
+$("#title").addEventListener("input", fitTitle);
+$("#title").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+$("#severity").onchange = () => { $("#why").textContent = "Severity changed by you."; };
+$("#toggleEdit").onclick = () => {
+  const editing = !$("#bodyEdit").classList.contains("hidden");
+  if (editing) renderPreview();
+  $("#bodyEdit").classList.toggle("hidden", editing);
+  $("#preview").classList.toggle("hidden", !editing);
+  $("#toggleEdit").textContent = editing ? "edit text" : "show preview";
+};
+$("#redo").onclick = () => ask("ticket", true);
+
+$("#send").onclick = async () => {
+  const btn = $("#send");
+  btn.disabled = true; btn.textContent = "Sending…"; $("#sendError").textContent = "";
+  try {
+    const sev = $("#severity").value;
+    let body = $("#bodyEdit").value;
+    if (sev !== draft.ticket.severity) body = body.replace(/\| \*\*Severity\*\* \|[^\n]*\|/, `| **Severity** | ${sev} (changed by the user) |`);
+    const r = await api("/api/publish", { title: $("#title").value, body, labels: ["it-ticket", `severity:${sev}`] });
+    if (r.dryRun) {
+      $("#doneTick").textContent = "✓ saved";
+      $("#doneTitle").textContent = "Ticket saved";
+      $("#doneText").innerHTML = `Saved as <span class="path">${esc(r.url)}</span>. Send it to your IT team, or connect GitHub in settings to create issues directly.`;
+      $("#doneOpen").textContent = "Open folder";
+      $("#doneOpen").onclick = () => api("/api/open", { target: "tickets-folder" });
+    } else {
+      $("#doneTick").textContent = `✓ #${r.number}`;
+      $("#doneTitle").textContent = "Ticket sent";
+      $("#doneText").textContent = "Your IT team has what they need: the exact error, what you tried, and when it happened.";
+      $("#doneOpen").textContent = "Open ticket";
+      $("#doneOpen").onclick = () => openLink(r.url);
+    }
+    $("#doneOpen").classList.remove("hidden");
+    $("#another").textContent = "Report another problem";
+    $("#note").value = "";
+    show("v-done");
+  } catch (e) {
+    $("#sendError").className = "result bad"; $("#sendError").textContent = e.message;
+  } finally { btn.disabled = false; btn.textContent = "Send to IT"; }
+};
+$("#another").onclick = () => ask("ticket");
+
+// ------------------------------------------------------------ quick fix
+let lastFixNote = "", lastHelp = null;
+async function quickFix() {
+  mode = "fix";
+  lastFixNote = $("#note").value;
+  let res;
+  try { res = await withProgress((m) => api("/api/help", { minutes: m, note: lastFixNote })); } catch { return; }
+  lastHelp = res.help;
+  const h = res.help;
+  $("#diag").innerHTML = maskify(esc(h.diagnosis));
+  if (h.solvable) {
+    $("#verdict").className = "verdict"; $("#verdict").textContent = "you can fix this";
+    $("#fixTitle").textContent = "Try these steps";
+    $("#checklist").innerHTML = h.steps.map((s, i) =>
+      `<li><label><input type="checkbox" /><span>${maskify(esc(s))}</span></label></li>`).join("");
+    $("#checklist").classList.remove("hidden");
+    $("#fixActions").innerHTML = `<button class="btn primary" id="fixed">It works now</button>
+      <button class="btn" id="stillBroken">Still broken, create a ticket</button>`;
+  } else {
+    $("#verdict").className = "verdict it"; $("#verdict").textContent = "needs IT";
+    $("#fixTitle").textContent = "This one is for IT";
+    $("#diag").innerHTML += h.needs_it_because ? `<br><br>${maskify(esc(h.needs_it_because))}` : "";
+    $("#checklist").classList.add("hidden");
+    $("#fixActions").innerHTML = `<button class="btn primary" id="stillBroken">Create a ticket</button>
+      <button class="btn" id="backAsk">Back</button>`;
+  }
+  show("v-fix");
+}
+$("#fixActions").addEventListener("click", (e) => {
+  if (e.target.id === "fixed") {
+    $("#doneTick").textContent = "✓ fixed";
+    $("#doneTitle").textContent = "Glad it works again";
+    $("#doneText").textContent = "Nothing was sent to IT. If it happens again, TicketPipe can write the ticket for you.";
+    $("#doneOpen").classList.add("hidden");
+    $("#another").textContent = "Back to start";
+    show("v-done");
+  }
+  if (e.target.id === "stillBroken") {
+    // Hand everything over to the ticket, including what the user already tried.
+    const tried = lastHelp?.solvable ? $$("#checklist li").filter((li) => $("input", li).checked).map((li) => li.textContent.trim().replace(/[.\s]+$/, "")) : [];
+    const note = [lastFixNote.trim(), tried.length ? `I already tried: ${tried.join("; ")}.` : ""].filter(Boolean).join(" ");
+    $("#note").value = note;
+    createTicket(note);
+  }
+  if (e.target.id === "backAsk") ask("fix", true);
+});
+
+// ------------------------------------------------------------ settings dialog
+const dlg = $("#settings");
+function openSettings() { fillForm(dlg, settings); dlg.showModal(); }
+$("#settingsCancel").onclick = () => dlg.close();
+$("#settingsX").onclick = () => dlg.close();
+$("#settingsSave").onclick = async () => {
+  await saveFrom(dlg, { onboarded: true });
+  dlg.close();
+  if (!$("#v-setup").classList.contains("hidden") || !$("#v-ask").classList.contains("hidden")) ask(mode, true);
+  else refreshConnection();
+};
+
+// ------------------------------------------------------------ boot
+setInterval(() => fetch("/api/ping").catch(() => {}), 4000); // tells the app the window is still open
+fetch("/api/ping").catch(() => {});
+(async () => {
+  settings = await api("/api/settings");
+  if (settings.onboarded) return ask("ticket");
+  fillForm(setup, settings); goStep(0); show("v-setup"); refreshConnection();
+  // Saves a copy-paste: look for the screenpipe key right away.
+  if (!settings.screenpipeApiKey) runDetect(setup, $("[data-detect]", setup));
+  else { const r = $('[data-result="detect"]', setup); r.className = "result ok"; r.textContent = "screenpipe key already saved."; }
+})();
+</script>
+</body>
+</html>
