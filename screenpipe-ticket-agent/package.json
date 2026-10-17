@@ -1,0 +1,21 @@
+{
+  "name": "screenpipe-ticket-agent",
+  "version": "0.1.0",
+  "description": "Turn what screenpipe already saw into a precise, ready-to-send IT ticket.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/server.ts",
+    "demo": "bun run src/server.ts --demo",
+    "ticket": "bun run src/cli.ts",
+    "snapshot": "bun run scripts/snapshot.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "marked": "12"
+  }
+}

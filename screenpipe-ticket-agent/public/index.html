@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ticket Agent · screenpipe</title>
+  <script src="/vendor/marked.js"></script>
+  <style>
+    :root {
+      --bg: #f6f5f2; --panel: #ffffff; --ink: #1b1b1f; --muted: #6b6b75; --line: #e4e2dc;
+      --accent: #3b5bdb; --accent-ink: #fff; --ok: #2b8a3e; --warn: #c2410c; --code: #f1efe9;
+      --sev-low: #868e96; --sev-medium: #e8a10c; --sev-high: #e8590c; --sev-critical: #c92a2a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121214; --panel: #1b1b1f; --ink: #ececf0; --muted: #9a9aa6; --line: #2c2c33;
+        --accent: #748ffc; --accent-ink: #0b0b10; --ok: #69db7c; --warn: #ff8a50; --code: #24242a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+    header h1 span { color: var(--muted); font-weight: 450; }
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+    .pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+    .pill.ok::before, .pill.bad::before { content: "●"; margin-right: 6px; }
+    .pill.ok::before { color: var(--ok); } .pill.bad::before { color: var(--warn); }
+
+    main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 20px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+    .card h2 { margin: 0 0 4px; font-size: 15px; }
+    .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+    input, select, textarea { font: inherit; color: var(--ink); background: var(--bg);
+      border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; width: 100%; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    textarea { font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+    .grow { flex: 1 1 320px; }
+
+    button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer;
+      background: var(--accent); color: var(--accent-ink); }
+    button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+    button:disabled { opacity: .5; cursor: progress; }
+
+    .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .stat { font-size: 12px; background: var(--code); border-radius: 6px; padding: 4px 8px; }
+    .stat.shield { color: var(--ok); }
+    .sev { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+
+    .tabs { display: flex; gap: 6px; margin: 14px 0 8px; }
+    .tabs button { padding: 6px 12px; font-size: 13px; }
+    .preview { border: 1px solid var(--line); border-radius: 8px; padding: 4px 18px; min-height: 300px; overflow-x: auto; }
+    .preview pre, .preview code { background: var(--code); border-radius: 6px; }
+    .preview pre { padding: 10px 12px; white-space: pre-wrap; }
+    .preview table { border-collapse: collapse; } .preview td, .preview th { border: 1px solid var(--line); padding: 4px 10px; }
+
+    details { margin-top: 14px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+    details pre { background: var(--code); padding: 12px; border-radius: 8px; max-height: 360px; overflow: auto;
+      font-size: 12px; white-space: pre-wrap; }
+
+    .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    .msg { margin-top: 14px; padding: 10px 14px; border-radius: 8px; font-size: 14px; display: none; }
+    .msg.show { display: block; } .msg.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+    .msg.err { background: color-mix(in srgb, var(--warn) 16%, transparent); white-space: pre-wrap; }
+    .msg a { color: inherit; font-weight: 600; }
+    .hidden { display: none; }
+    .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent;
+      border-radius: 50%; animation: s .7s linear infinite; vertical-align: -1px; margin-right: 8px; }
+    @keyframes s { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🎫 Ticket Agent <span>· powered by screenpipe</span></h1>
+  <div class="pills" id="pills"><span class="pill">checking…</span></div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1 · Something went wrong?</h2>
+    <p class="hint">No need to reproduce it — screenpipe already saw it. Pick how far back to look and (optionally) add a word.</p>
+    <div class="row">
+      <label style="width:150px">Look back
+        <select id="minutes">
+          <option value="5">5 minutes</option>
+          <option value="15" selected>15 minutes</option>
+          <option value="30">30 minutes</option>
+          <option value="60">1 hour</option>
+        </select>
+      </label>
+      <label class="grow">What were you trying to do? <em>(optional)</em>
+        <input id="note" placeholder="e.g. connect to the VPN to open the intranet" />
+      </label>
+      <button id="draftBtn">Create ticket draft</button>
+    </div>
+    <div id="draftMsg" class="msg"></div>
+  </section>
+
+  <section class="card hidden" id="review">
+    <h2>2 · Review before sending</h2>
+    <p class="hint">Nothing leaves your machine until you click <b>Send</b>. Edit anything you want.</p>
+    <div class="stats" id="stats"></div>
+
+    <div class="row">
+      <label class="grow">Title <input id="title" /></label>
+      <label style="width:170px">Severity
+        <select id="severity">
+          <option value="low">Low</option><option value="medium">Medium</option>
+          <option value="high">High</option><option value="critical">Critical</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="tabs">
+      <button class="ghost" data-tab="preview">Preview</button>
+      <button class="ghost" data-tab="edit">Edit markdown</button>
+    </div>
+    <div id="preview" class="preview"></div>
+    <textarea id="body" rows="22" class="hidden"></textarea>
+
+    <details>
+      <summary>🔍 Exactly what was sent to the AI (already redacted)</summary>
+      <pre id="context"></pre>
+    </details>
+
+    <div class="actions">
+      <button id="publishBtn">Send to IT</button>
+      <button class="ghost" id="regenBtn">Regenerate</button>
+    </div>
+    <div id="publishMsg" class="msg"></div>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let tab = "preview";
+
+  function show(el, kind, html) { el.className = `msg show ${kind}`; el.innerHTML = html; }
+  function hide(el) { el.className = "msg"; }
+  function busy(btn, on, label) {
+    btn.disabled = on;
+    if (on) { btn.dataset.label = btn.textContent; btn.innerHTML = `<span class="spin"></span>${label}`; }
+    else btn.textContent = btn.dataset.label || btn.textContent;
+  }
+
+  function renderPreview() {
+    const md = $("body").value;
+    $("preview").innerHTML = window.marked ? marked.parse(md) : `<pre>${esc(md)}</pre>`;
+  }
+  function setTab(t) {
+    tab = t;
+    $("preview").classList.toggle("hidden", t !== "preview");
+    $("body").classList.toggle("hidden", t !== "edit");
+    document.querySelectorAll("[data-tab]").forEach((b) => b.style.fontWeight = b.dataset.tab === t ? 700 : 500);
+    if (t === "preview") renderPreview();
+  }
+  document.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
+
+  async function status() {
+    try {
+      const s = await (await fetch("/api/status")).json();
+      const sp = s.screenpipe || {};
+      const spOk = !sp.error;
+      const spLabel = sp.mode === "replay" ? `replay: ${sp.file}` : spOk ? "screenpipe recording" : `screenpipe: ${sp.error}`;
+      $("pills").innerHTML =
+        `<span class="pill ${spOk ? "ok" : "bad"}">${esc(spLabel)}</span>` +
+        `<span class="pill ok">AI: ${esc(s.llm)}</span>` +
+        `<span class="pill ${s.github.startsWith("dry") ? "bad" : "ok"}">GitHub: ${esc(s.github)}</span>`;
+    } catch { $("pills").innerHTML = `<span class="pill bad">server unreachable</span>`; }
+  }
+
+  async function draft() {
+    const btn = $("draftBtn");
+    hide($("draftMsg")); hide($("publishMsg"));
+    busy(btn, true, "Reading your screen history…");
+    try {
+      const res = await fetch("/api/draft", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ minutes: Number($("minutes").value), note: $("note").value }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+
+      $("title").value = d.title;
+      $("severity").value = d.ticket.severity;
+      $("body").value = d.body;
+      $("context").textContent = d.contextSent;
+
+      const red = Object.entries(d.stats.redactions);
+      const total = red.reduce((a, [, n]) => a + n, 0);
+      $("stats").innerHTML = [
+        `${d.stats.events} events read`,
+        `${d.stats.segments} app sessions`,
+        `apps: ${d.stats.apps.join(", ")}`,
+        `source: ${d.stats.source}`,
+      ].map((t) => `<span class="stat">${esc(t)}</span>`).join("") +
+        `<span class="stat shield">🛡 ${total} sensitive item(s) masked${total ? ` (${red.map(([k, n]) => `${k}×${n}`).join(", ")})` : ""}</span>`;
+
+      $("review").classList.remove("hidden");
+      setTab("preview");
+      $("review").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+      show($("draftMsg"), "err", esc(e.message));
+    } finally { busy(btn, false); }
+  }
+
+  async function publish() {
+    const btn = $("publishBtn");
+    busy(btn, true, "Sending…");
+    try {
+      const sev = $("severity").value;
+      const body = $("body").value.replace(/\| \*\*Severity\*\* \| \w+ \|/, `| **Severity** | ${sev} |`);
+      const res = await fetch("/api/publish", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: $("title").value, body, labels: ["it-ticket", `severity:${sev}`] }),
+      });
+      const r = await res.json();
+      if (!res.ok) throw new Error(r.error);
+      show($("publishMsg"), "ok", r.dryRun
+        ? `💾 Dry run: saved to <code>${esc(r.url)}</code> (set GITHUB_TOKEN + GITHUB_REPO to send for real)`
+        : `✅ Ticket #${r.number} created — <a href="${esc(r.url)}" target="_blank" rel="noopener">open on GitHub</a>`);
+    } catch (e) {
+      show($("publishMsg"), "err", esc(e.message));
+    } finally { busy(btn, false); }
+  }
+
+  $("draftBtn").onclick = draft;
+  $("regenBtn").onclick = draft;
+  $("publishBtn").onclick = publish;
+  $("body").addEventListener("input", () => tab === "preview" && renderPreview());
+  status();
+</script>
+</body>
+</html>
