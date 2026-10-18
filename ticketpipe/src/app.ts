@@ -6,9 +6,10 @@
 //   ./ticketpipe --demo  # sample incident, no screenpipe needed
 //   ./ticketpipe --install   # Linux: add to the applications menu
 
-import { existsSync, mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import launcherIcon from "../brand/icon.svg" with { type: "file" };
 import { APP_NAME, appDataDir, applyDemoFlag, config, loadSettings } from "./config";
 import { openExternal } from "./open";
 import { autoDetectKey, isAppRunningOn, lastPing, startServer } from "./server";
@@ -83,10 +84,7 @@ function installLinuxLauncher() {
   const apps = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "applications");
   const icons = join(appDataDir(), "icon.svg");
   mkdirSync(apps, { recursive: true });
-  writeFileSync(
-    icons,
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="6" y="14" width="52" height="36" rx="6" fill="#F2C230"/><rect x="6" y="14" width="52" height="10" rx="6" fill="#14213D"/><circle cx="16" cy="38" r="4" fill="#14213D"/><rect x="26" y="34" width="24" height="3" rx="1.5" fill="#14213D"/><rect x="26" y="40" width="16" height="3" rx="1.5" fill="#14213D"/></svg>`,
-  );
+  writeFileSync(icons, readFileSync(launcherIcon));
   const desktop = join(apps, "ticketpipe.desktop");
   writeFileSync(
     desktop,
