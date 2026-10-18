@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/lockup-bone.svg">
+  <img src="brand/lockup-ink.svg" alt="TicketPipe" height="64">
+</picture>
+
 # [ ticketpipe ]
 
 **TicketPipe turns what your computer already saw into a precise IT ticket, or fixes simple problems on the spot.** Built on [screenpipe](https://screenpipe.com).
