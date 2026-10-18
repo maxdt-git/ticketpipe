@@ -1,8 +1,10 @@
 import { AppError } from "../errors";
 import { redact } from "../redact";
-import type { Action, Check, Control, Observation, RepairPlan } from "./contracts";
+import type { Action, Check, Control, DesktopPlatform, Observation, RepairPlan } from "./contracts";
 
 export const KEYS = ["ENTER", "TAB", "ESC", "SPACE", "UP", "DOWN", "LEFT", "RIGHT", "HOME", "END", "PAGEUP", "PAGEDOWN", "CTRL+A", "CTRL+F", "CTRL+S", "CTRL+R", "F5", "BACKSPACE"] as const;
+export const MAC_KEYS = [...KEYS.filter(k => !k.startsWith("CTRL+") && k !== "F5"), "CMD+A", "CMD+F", "CMD+S", "CMD+R"];
+export const platformKeys = (platform?: DesktopPlatform): readonly string[] => platform === "macos" ? MAC_KEYS : KEYS;
 const dangerous = /\b(delete|erase|format|uninstall|shutdown|shut down|restart computer|reboot|discard|remove account|reset all|factory reset|send|publish|payment|purchase|buy|install|run|execute|debug|evaluate|macro|security|privacy|permission|sign in|log in|api key|token|type a message|administrator|password|credential|terminal|console|powershell|command prompt|supprimer|effacer|désinstaller|envoyer|administrateur|contraseña|eliminar|borrar|desinstalar|enviar)\b/i;
 const code = /(?:javascript:|data:|file:|\[REDACTED_|\.(?:exe|bat|cmd|ps1|vbs)\b|\b(?:powershell|pwsh|Invoke-Expression|Start-Process|shell:|ms-settings:|eval\s*\(|exec\s*\(|subprocess\.|process\.)|(?:^|\n)\s*(?:curl|wget|rm|del|reg|schtasks|shutdown|npm|npx|bun|python|node)\s|<script\b)/i;
 
@@ -59,7 +61,7 @@ export function validateAction(value: any, observation: Observation): { action: 
     if (!control.editable || typeof value.text !== "string" || value.text.length > 2000 || code.test(value.text)) throw new AppError("Text entry is unsupported, protected, or contains a command or masked value.");
     action = { kind: "text", ref: value.ref, text: value.text };
   } else if (value.kind === "keys") {
-    if (!KEYS.includes(value.key) || ((value.key === "BACKSPACE" || value.key === "CTRL+A") && !control.editable)) throw new AppError("This key combination is not allowed on this control.");
+    if (!platformKeys(observation.platform).includes(value.key) || !(control.allowedKeys ?? (observation.platform === "linux" ? [] : platformKeys(observation.platform))).includes(value.key) || (["BACKSPACE", "CTRL+A", "CMD+A"].includes(value.key) && !control.editable)) throw new AppError("This key combination is not allowed on this control.");
     action = { kind: "keys", ref: value.ref, key: value.key };
   } else if (value.kind === "scroll") {
     if (!["up", "down"].includes(value.direction)) throw new AppError("Invalid scroll direction.");

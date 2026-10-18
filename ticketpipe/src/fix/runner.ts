@@ -4,8 +4,8 @@ import { AppError } from "../errors";
 import { IncidentStore, incidents, type Incident } from "../incidents";
 import { callLlm, isRealAiConfigured, llmSettings, type LlmSettings } from "../llm";
 import { redact } from "../redact";
-import { ControllerError, WindowsController, helperPath } from "./controller";
-import type { Controller, FixPhase, FixRun, Observation, Outcome, RepairPlan, TargetWindow } from "./contracts";
+import { ControllerError, NativeController, desktopPlatform, helperPath } from "./controller";
+import type { Controller, FixPhase, FixRun, FixStatus, Observation, Outcome, RepairPlan, TargetWindow } from "./contracts";
 import { writeRepairDiagnostic, type RepairDiagnostic } from "./diagnostics";
 import { evaluateChecks, observedChanges, parseObject, redactObservation, validateAction, validatePlan } from "./policy";
 import { PLAN_PROMPT, STEP_PROMPT } from "./prompts";
@@ -20,43 +20,64 @@ export class FixService {
   private jobs = new Map<string, Job>();
   private choices = new Map<string, { window: TargetWindow; at: number }>();
   private active?: string;
+  private picker?: Controller;
+  private selecting = false;
   private timer: ReturnType<typeof setInterval>;
   constructor(private options: { store?: IncidentStore; controller?: () => Controller; agent?: AgentCall; now?: () => number; available?: () => { available: boolean; reason: string }; duration?: number; lease?: number; actionLimit?: number; diagnostic?: (event: RepairDiagnostic) => void } = {}) {
     this.timer = setInterval(() => this.tick(), 1000); this.timer.unref();
   }
   private get store() { return this.options.store ?? incidents; }
   private now() { return (this.options.now ?? Date.now)(); }
-  private controller() { return (this.options.controller ?? (() => new WindowsController()))(); }
+  private controller() { return (this.options.controller ?? (() => new NativeController()))(); }
   availability() {
     if (this.options.available) return this.options.available();
-    if (process.platform !== "win32") return { available: false, reason: "Automatic fixing is available on Windows only." };
+    if (!desktopPlatform()) return { available: false, reason: "Automatic fixing supports Windows, macOS and GNOME Linux desktops." };
     if (config.demoMode || config.contextFile) return { available: false, reason: "Automatic fixing needs your live Screenpipe history, not a sample or replay." };
     if (!isRealAiConfigured()) return { available: false, reason: "Configure a real AI in Settings to enable automatic fixing." };
-    try { if (!helperPath()) return { available: false, reason: "The Windows controller is missing. Build it with bun run build:native." }; }
-    catch { return { available: false, reason: "The Windows controller could not be installed. Check your app installation." }; }
+    try { if (!helperPath()) return { available: false, reason: "The native controller is missing. Install a complete TicketPipe build for this computer." }; }
+    catch { return { available: false, reason: "The native controller could not be installed. Check your app installation." }; }
     return { available: true, reason: "Select one application window. You can stop the attempt at any time." };
   }
-  async assessAvailability() {
+  async assessAvailability(): Promise<FixStatus> {
     const capability = this.availability();
-    if (!capability.available) return capability;
+    if (!capability.available && (this.options.available || !desktopPlatform())) return capability;
     const controller = this.controller();
-    try { await controller.windows(); return capability; }
-    catch { return { available: false, reason: "The Windows controller is not responding. Check the app installation." }; }
+    try {
+      if (!controller.status) { if (capability.available) await controller.windows(); return capability; }
+      const status = await controller.status();
+      return { available: capability.available && status.ready, reason: status.ready ? capability.reason : status.reason, controller: status, setup: status.setup };
+    }
+    catch (error) { return { available: false, reason: error instanceof Error ? error.message : "The native controller is not responding. Check the app installation." }; }
     finally { await controller.close(); }
+  }
+  async permissions(): Promise<FixStatus> {
+    if (this.active) throw new AppError("Stop the current attempt before changing accessibility setup.", 409);
+    const controller = this.controller();
+    try {
+      if (!controller.permissions) throw new AppError("No accessibility setup is required on this platform.", 409);
+      await controller.permissions();
+    } finally { await controller.close(); }
+    return this.assessAvailability();
   }
   async windows(): Promise<TargetWindow[]> {
     const capability = this.availability(); if (!capability.available) throw new AppError(capability.reason, 409);
-    if (this.active) throw new AppError("Stop the current attempt before selecting another window.", 409);
-    const controller = this.controller();
+    if (this.active || this.selecting) throw new AppError("Wait for window selection or stop the current attempt first.", 409);
+    this.selecting = true;
+    const previous = this.picker; this.picker = undefined; this.choices.clear();
+    let controller: Controller | undefined;
     try {
+      await previous?.close(); controller = this.controller();
       const list = await controller.windows();
+      this.picker = controller;
       this.choices.clear();
       return list.map(window => { const id = crypto.randomUUID(); this.choices.set(id, { window, at: this.now() }); return { ...window, id }; });
-    } finally { await controller.close(); }
+    } catch (error) { await controller?.close(); throw error; }
+    finally { this.selecting = false; }
   }
   start(incidentId: string, windowId: string, manualSteps: unknown = []): FixRun {
     const capability = this.availability(); if (!capability.available) throw new AppError(capability.reason, 409);
     if (this.active) throw new AppError("Another repair is already running. Stop it first.", 409);
+    if (this.selecting) throw new AppError("Window selection is in progress. Wait for it to finish.", 409);
     const selected = this.choices.get(windowId);
     if (!selected || this.now() - selected.at > 120_000) throw new AppError("Refresh the window list and select the target again.", 409);
     let incident = this.store.get(incidentId);
@@ -66,7 +87,8 @@ export class FixService {
     const id = crypto.randomUUID();
     const startedAt = new Date(this.now()).toISOString();
     const run: FixRun = { id, incidentId, window: { ...selected.window, title: redact(selected.window.title).text, id: windowId }, status: "running", progress: "Connecting to the selected application…", phase: "connecting", phaseStartedAt: startedAt, startedAt, actions: [], checks: [], verification: "pending" };
-    const job: Job = { run, incident, settings: llmSettings(), controller: this.controller(), abort: new AbortController(), heartbeat: this.now(), started: this.now() };
+    const job: Job = { run, incident, settings: llmSettings(), controller: this.picker ?? this.controller(), abort: new AbortController(), heartbeat: this.now(), started: this.now() };
+    this.picker = undefined; this.choices.clear();
     this.jobs.set(id, job); this.active = id;
     this.diagnostic(job, "started");
     // Never let an HTTP response wait for model inference or UI Automation.
@@ -119,9 +141,10 @@ export class FixService {
       }
     }
     this.store.sweep();
+    if (this.picker && [...this.choices.values()].every(c => this.now() - c.at > 120_000)) { void this.picker.close(); this.picker = undefined; this.choices.clear(); }
     for (const [id, j] of this.jobs) if (!isRunning(j.run.status) && this.now() - j.started > 30 * 60_000) this.jobs.delete(id);
   }
-  async shutdown() { clearInterval(this.timer); if (this.active) await this.stop(this.active, "TicketPipe is closing."); }
+  async shutdown() { clearInterval(this.timer); await this.picker?.close(); this.picker = undefined; if (this.active) await this.stop(this.active, "TicketPipe is closing."); }
   async wait(id: string) { await this.job(id).task; return this.get(id); }
   private context(job: Job, observation: Observation, plan?: RepairPlan) {
     return { problem: job.incident.note, evidence: job.incident.contextSent, capture: job.incident.stats, snapshotCreatedAt: new Date(job.incident.createdAt).toISOString(), suggestedFix: job.incident.help, manuallyAttempted: job.incident.manualSteps.map(i => job.incident.help.steps[i]), selectedWindow: { title: job.run.window.title, app: job.run.window.app }, live: observation, ...(plan ? { successCriteria: plan, performedActions: job.run.actions } : {}) };
@@ -140,7 +163,20 @@ export class FixService {
       run.phase = "finished"; run.phaseStartedAt = run.finishedAt;
     };
     try {
-      this.live(job); await job.controller.bind(nativeId, job.abort.signal); this.live(job);
+      this.live(job); const binding = await job.controller.bind(nativeId, job.abort.signal); this.live(job);
+      if (binding?.state === "awaiting_focus") {
+        if (!job.controller.focus) throw new ControllerError("This controller cannot establish selected-window focus.", "inaccessible", false);
+        this.phase(job, "awaiting_focus", "Bring the selected application window forward within 15 seconds. Stop remains available.");
+        const deadline = this.now() + 15_000;
+        while (true) {
+          this.live(job);
+          if (this.now() >= deadline) throw new ControllerError("The selected window was not brought forward within 15 seconds. Start a new attempt when ready.", "activation_failed", false);
+          const focus = await job.controller.focus(job.abort.signal); this.live(job);
+          if (this.now() >= deadline) throw new ControllerError("The selected window was not brought forward within 15 seconds. Start a new attempt when ready.", "activation_failed", false);
+          if (focus.state === "ready") break;
+          await delay(150, undefined, { signal: job.abort.signal });
+        }
+      }
       job.bound = true;
       let observation = await this.observe(job);
       this.phase(job, "planning", "Waiting for the AI to choose a safe first action and success checks…");

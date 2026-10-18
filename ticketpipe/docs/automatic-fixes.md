@@ -1,10 +1,26 @@
-# Windows automatic quick fixes
+# Automatic quick fixes
 
-**Platform support: Windows only.** Automatic execution is unavailable on macOS and Linux; ticket generation and manual quick-fix suggestions remain supported there.
+Windows remains the verified baseline (`253544c`). Native controllers are implemented for macOS and GNOME Linux, including Ubuntu Desktop and Fedora Workstation. New platform desktop acceptance remains unverified until the native tests below are completed.
+
+| Platform | Planned support | Current verification |
+|---|---|---|
+| Windows x64 | Windows UI Automation | Existing real-AI baseline; shared protocol and regression tests pass |
+| Ubuntu 24.04 x64 GNOME | Wayland and Xorg | Native helper builds/tests in Ubuntu WSL; GNOME desktop acceptance pending |
+| Ubuntu 26.04 x64 GNOME | Wayland | Pending native desktop acceptance |
+| Fedora Workstation x64 GNOME | Wayland; Xorg where the release provides it | Pending native desktop acceptance; record exact release |
+| Linux ARM64 GNOME | Matching helper and executable | Helper/executable built; native runtime and desktop acceptance unverified |
+| macOS 13+ Apple Silicon | Apple Accessibility | Apple-target source check passes; native build/acceptance pending |
+| macOS 13+ Intel | Apple Accessibility | Apple-target source check passes; native build/acceptance pending |
+
+Other desktop environments, WSLg, headless servers and container sessions are outside the qualified scope. A distro name alone does not establish usable accessibility or reliable focus tracking. Ubuntu 26.04's standard GNOME session is Wayland-only ([release notes](https://documentation.ubuntu.com/release-notes/26.04/summary-for-lts-users/)). Fedora Workstation uses GNOME ([Fedora](https://fedoraproject.org/workstation/)).
 
 After generating a quick-fix suggestion, choose **Let TicketPipe try**, select an existing application window, and start. Keep the selected window in front. Switching applications stops the attempt. TicketPipe's Stop button remains available; closing the controlling page also stops execution. Routine actions run without individual approval.
 
-This release uses Windows UI Automation. Apps must expose accessible controls. Unreadable apps, administrator prompts, protected fields, destructive operations, terminals, and fixes requiring another window need user intervention. No screenshot or coordinate fallback is used. macOS and Linux retain manual quick fixes and tickets, with automatic fixing unavailable.
+The helper uses Windows UI Automation, Apple Accessibility or AT-SPI over D-Bus. Apps must expose accessible controls. Unreadable apps, administrator prompts, protected fields, destructive operations, terminals, and fixes requiring another unrelated window need user intervention. No screenshot or coordinate fallback is used. Manual quick fixes and tickets continue to work when automation is unavailable.
+
+macOS Accessibility and the Linux desktop accessibility bridge are enabled only through the explicit setup button. Readiness checks never prompt. Refreshing readiness preserves an unexpired incident. Permission denial/revocation prevents execution; granting permission never starts or resumes a run. The repair feature requests no screenshots, screen recording or microphone access.
+
+On GNOME Wayland (including XWayland applications), only semantic accessibility operations are available. No keyboard input is exposed. Bring the selected window forward when asked, within 15 seconds; Stop remains available and no controls are observed or acted on during this wait. It counts toward the three-minute limit. Xorg keys require unique PID/title correlation to the active X11 client. Mac shortcuts use an independent Command-key allowlist and process-targeted events. Both native helpers re-resolve controls, compare fresh state, consume observations once and reject unproven dialog ownership. Focus loss after handoff revokes the attempt without reacquisition.
 
 The configured AI receives the original masked incident, suggestions, explicitly checked manual steps, and masked live accessibility information. Captured content is untrusted evidence. A planner establishes fixed success criteria and proposes the first action in the same request. The runner validates both before input, avoiding a second AI round trip before the first action. The runner independently checks accessible text, visibility, values, selection and toggle state; an AI completion message cannot establish success. For editable value checks, a unique automation ID and role can identify a field whose name changes after editing, provided the observation is complete. Other checks and ambiguous or truncated observations retain exact-name matching. Explicit user confirmation is labeled user-reported.
 
@@ -14,7 +30,7 @@ The configured AI receives the original masked incident, suggestions, explicitly
 flowchart TD
   A[Screenpipe + description] --> B[Mask and freeze incident for 30 minutes]
   B --> C[Quick-fix suggestion]
-  C --> D[User selects a Windows app]
+  C --> D[User selects an application window]
   D --> E[Background repair runner]
   E --> F[Observe via private Rust child process]
   F --> G[Configured AI proposes one structured action]
@@ -42,6 +58,8 @@ Every control request needs the per-launch `x-ticketpipe-token` from the served 
 
 | Interface | Purpose |
 |---|---|
+| `GET /api/fix/status` | Read-only protocol, platform, permission and setup readiness |
+| `POST /api/fix/permissions` | Explicit accessibility setup; never starts a repair |
 | `GET /api/fix/windows` | Enumerate eligible windows; return short-lived opaque choices |
 | `POST /api/fix/runs` | Start with incidentId, windowId and manualSteps; return 202 immediately |
 | `GET /api/fix/runs/:id` | Progress, audit, checks and outcome |
@@ -56,13 +74,22 @@ Run `bun install`, `bun run build:native`, `bun run typecheck`, and `bun test`. 
 
 The repair runner and controller are TicketPipe implementations. They do not import Workshop Companion's agent or application stack. Existing window-identity and cancellation patterns inform the design; the workspace's portable Rust build tools are reused.
 
-Cross-platform builds use the same build command and omit the helper outside Windows. macOS bundles require zip or tar on the build machine.
+Every release now requires a matching native helper. Linux embeds an integrity-checked executable and extracts it with owner-only permissions. Mac bundles contain the helper at `Contents/Helpers/ticketpipe-controller` and use stable bundle identifiers, minimum macOS 13, and ad-hoc signatures for private testing. Replacing a private Mac build may require granting Accessibility again. Recipients need no language runtime or compiler.
 
-On a non-Windows build host, the default build produces macOS and Linux releases. To cross-package Windows as well, set `TICKETPIPE_WINDOWS_HELPER` to a controller executable built on Windows.
+Build helpers on their native OS. Cross-packaging requires a matching prebuilt helper, checked for format and architecture; Mac signing finishes on a Mac. Missing helpers fail clearly before release outputs are changed. See [native build commands and the desktop acceptance checklist](native-testing.md).
 
 `bun run scripts/native-acceptance.ts` serves disposable browser controls at `http://127.0.0.1:4243`. Bring that page to the foreground, then click Run acceptance checks. It exercises the real native boundary, field input, independent verification, destructive-action refusal, stale observations, protected fields, replaced identity, and Stop. These scripted checks are separate from production agent behavior. Real configured-AI acceptance must additionally exercise successful repair, unsuccessful repair and Stop with live Screenpipe evidence in ordinary applications.
 
-## Validation recorded on 2026-10-18
+## Cross-platform implementation checks on 2026-10-18
+
+- Type checking and 38 Bun tests pass, covering the existing runner/ticket/publishing regression suite plus version/platform rejection, platform keys, manual handoff, late focus, cancellation, permission setup, helper retention and overlapping pickers. Publishing remains mocked; no ticket was posted.
+- Nine Windows Rust tests and four Linux Rust tests pass. Eight native boundary checks pass in an existing Chrome installation on Windows using disposable controls, including semantic toggle/text input, independent verification, protected/destructive controls, consumed observations, Stop and invalid identities.
+- Linux x64 helper builds natively in Ubuntu 24.04 WSL. The standalone Linux executable launches without developer tools on PATH, extracts its helper on a native Linux filesystem with owner-only `700` directory/executable modes, and correctly reports WSLg as outside the GNOME session scope. A Windows-mounted folder that ignores POSIX modes is refused. These checks do not qualify a GNOME graphical session.
+- Both macOS architectures and Linux ARM64 pass source checks. The ARM64 Linux helper also builds on Ubuntu using Rust's self-contained musl target and is bundled into the ARM64 executable; that executable has not been run on ARM64 hardware. Mac helpers and signed bundles have not been built or run on macOS here. Ad-hoc signing and permission behavior remain unverified until the Mac build and desktop checklist are run.
+- The packaged Windows executable reports a ready, compatible embedded helper with only Windows system folders on PATH. Mac builds fail clearly when matching prebuilt helpers are absent; stale controller-free release files are not rebuilt as new Mac releases.
+- Ubuntu GNOME 24.04 Wayland/Xorg, Ubuntu 26.04 Wayland, Fedora Workstation GNOME, Linux ARM64 runtime, and Mac Intel/Apple Silicon native real-AI acceptance are pending. Use [the native test checklist](native-testing.md) and record each architecture/session separately. Current Windows boundary checks do not repeat the complete baseline real-AI picker-to-target suite described below.
+
+## Windows baseline validation recorded on 2026-10-18
 
 - Type checking passed; 30 Bun tests and seven Rust tests passed.
 - Eight native boundary checks passed against disposable controls in an existing Chrome installation.

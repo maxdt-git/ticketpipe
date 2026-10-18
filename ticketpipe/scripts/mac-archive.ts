@@ -12,7 +12,7 @@ export async function fixMacArchivePermissions(path: string) {
     const nameLength = data.readUInt16LE(cursor + 28), extraLength = data.readUInt16LE(cursor + 30), commentLength = data.readUInt16LE(cursor + 32);
     const name = data.toString("utf8", cursor + 46, cursor + 46 + nameLength);
     const directory = name.endsWith("/");
-    const mode = directory ? 0o40755 : name.endsWith("/MacOS/ticketpipe") ? 0o100755 : 0o100644;
+    const mode = directory ? 0o40755 : name.endsWith("/MacOS/ticketpipe") || name.endsWith("/Helpers/ticketpipe-controller") ? 0o100755 : 0o100644;
     data.writeUInt16LE((3 << 8) | 20, cursor + 4);
     data.writeUInt32LE(((mode << 16) | (directory ? 0x10 : 0)) >>> 0, cursor + 38);
     cursor += 46 + nameLength + extraLength + commentLength;

@@ -13,7 +13,7 @@ import { APP_NAME, appDataDir, applyDemoFlag, config, loadSettings } from "./con
 import { openExternal } from "./open";
 import { autoDetectKey, isAppRunningOn, lastPing, startServer } from "./server";
 import { fixes } from "./fix/runner";
-import { WindowsController } from "./fix/controller";
+import { NativeController } from "./fix/controller";
 
 const WINDOW = { width: 1120, height: 820 };
 
@@ -101,10 +101,9 @@ function installLinuxLauncher() {
 // ---------------------------------------------------------------- main
 
 if (process.argv.includes("--check-controller")) {
-  const controller = new WindowsController();
+  const controller = new NativeController();
   try {
-    if (process.platform !== "win32") console.log(JSON.stringify({ platform: process.platform, available: false }));
-    else console.log(JSON.stringify({ platform: process.platform, available: true, eligibleWindows: (await controller.windows()).length }));
+    console.log(JSON.stringify(await controller.status()));
   } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
   finally { await controller.close(); }
   process.exit(process.exitCode ?? 0);

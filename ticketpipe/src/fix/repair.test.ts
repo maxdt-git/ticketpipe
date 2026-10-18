@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { IncidentStore, incidents, type Evidence } from "../incidents";
 import { FixService, type AgentCall } from "./runner";
-import { ControllerError } from "./controller";
-import type { Action, Controller, Observation } from "./contracts";
+import { ControllerError, validateStatus } from "./controller";
+import type { Action, Binding, Controller, ControllerStatus, DesktopPlatform, Observation } from "./contracts";
 import { evaluateChecks, observedChanges, parseObject, redactObservation, validateAction, validatePlan } from "./policy";
 import { createApiSecurity } from "../security";
 import { config } from "../config";
@@ -20,6 +20,86 @@ const help = { solvable: true, diagnosis: "Wrap is off", steps: ["Enable Word wr
 const plan = { summary: "Enable word wrap", checks: [{ name: "Word wrap", property: "checked", equals: true }] };
 const decision = { progress: "Enable wrapping", action: { kind: "activate", ref: "e0" } };
 const services: FixService[] = [];
+describe("platform controller contract", () => {
+  const status = (platform: DesktopPlatform, extra = {}): ControllerStatus => ({ protocol: 1, platform, ready: true, permissions: "granted", reason: "Ready", setup: false, supportedActions: ["activate", "text", "select", "scroll"], allowedKeys: [], ...extra });
+  test("rejects incompatible, incorrect-platform and Wayland keyboard handshakes", () => {
+    for (const platform of ["windows", "linux", "macos"] as const) {
+      expect(validateStatus(status(platform), platform).platform).toBe(platform);
+      expect(() => validateStatus(status(platform, { protocol: 2 }), platform)).toThrow("incompatible");
+      expect(() => validateStatus(status(platform, { ready: true, permissions: "required" }), platform)).toThrow();
+    }
+    expect(() => validateStatus(status("linux"), "macos")).toThrow();
+    expect(() => validateStatus(status("linux", { session: "gnome-wayland", allowedKeys: ["CTRL+A"] }), "linux")).toThrow();
+    expect(() => validateStatus(status("macos", { allowedKeys: ["CTRL+A"] }), "macos")).toThrow();
+  });
+  test("platform and control key allowlists both apply", () => {
+    const observation: Observation = { id: "o", platform: "linux", title: "Document", truncated: false, controls: [{ ref: "e", name: "Search", role: "entry", automationId: "search", editable: true, enabled: true, actions: ["text", "keys"], allowedKeys: [] }] };
+    expect(() => validateAction({ kind: "keys", key: "CTRL+A", ref: "e" }, observation)).toThrow();
+    observation.platform = "macos"; observation.controls[0].allowedKeys = ["CMD+A"];
+    expect(validateAction({ kind: "keys", key: "CMD+A", ref: "e" }, observation).action.kind).toBe("keys");
+    expect(() => validateAction({ kind: "keys", key: "CTRL+A", ref: "e" }, observation)).toThrow();
+    observation.controls[0].editable = false;
+    expect(() => validateAction({ kind: "keys", key: "CMD+A", ref: "e" }, observation)).toThrow();
+  });
+  test("manual focus handoff performs no observation or AI work until ready", async () => {
+    let calls = 0;
+    const f = await fixture(async phase => { calls++; return phase === "plan" ? plan : decision; });
+    const controller = f.controller as FakeController & Controller;
+    const gate = deferred<Binding>();
+    controller.bind = async () => ({ state: "awaiting_focus" });
+    controller.focus = async () => gate.promise;
+    const run = f.start(); await settle();
+    expect(f.service.get(run.id).phase).toBe("awaiting_focus");
+    expect(controller.observations).toBe(0); expect(controller.acts).toBe(0); expect(calls).toBe(0);
+    gate.resolve({ state: "ready" });
+    expect((await f.service.wait(run.id)).status).toBe("verified_fixed");
+  });
+  test("Stop while awaiting focus discards late readiness", async () => {
+    const f = await fixture(); const gate = deferred<Binding>();
+    const controller = f.controller as FakeController & Controller;
+    controller.bind = async () => ({ state: "awaiting_focus" }); controller.focus = async () => gate.promise;
+    const run = f.start(); await settle(); await f.service.stop(run.id);
+    gate.resolve({ state: "ready" });
+    expect((await f.service.wait(run.id)).status).toBe("stopped");
+    expect(controller.observations).toBe(0); expect(controller.acts).toBe(0);
+  });
+  test("focus deadline includes slow probes and cannot start input afterward", async () => {
+    const f = await fixture(); const gate = deferred<Binding>();
+    const controller = f.controller as FakeController & Controller;
+    controller.bind = async () => ({ state: "awaiting_focus" }); controller.focus = async () => gate.promise;
+    const run = f.start(); await settle(); f.advance(10_000); f.service.heartbeat(run.id); f.advance(5_001);
+    gate.resolve({ state: "ready" }); const result = await f.service.wait(run.id);
+    expect(result.status).toBe("needs_user"); expect(result.progress).toContain("15 seconds"); expect(controller.observations).toBe(0);
+  });
+  test("readiness and permission setup neither start repairs nor replace evidence", async () => {
+    const f = await fixture(); const controller = f.controller as FakeController & Controller;
+    let prompts = 0, allowed = false;
+    controller.status = async () => status("macos", { ready: allowed, permissions: allowed ? "granted" : "required", setup: !allowed });
+    controller.permissions = async () => { prompts++; allowed = true; return controller.status!(); };
+    expect((await f.service.assessAvailability()).setup).toBe(true); expect(prompts).toBe(0);
+    expect((await f.service.permissions()).available).toBe(true); expect(prompts).toBe(1);
+    expect(controller.observations).toBe(0); expect(controller.acts).toBe(0);
+    expect(f.store.get(f.incident.id).contextSent).toBe("Original recorded error");
+  });
+  test("binding retains the picker helper and its native window identity", async () => {
+    let created = 0;
+    const controller = new FakeController();
+    const f = await fixture(undefined, { controller: () => { created++; return controller; } });
+    expect(created).toBe(1);
+    expect((await f.service.wait(f.start().id)).status).toBe("verified_fixed");
+    expect(created).toBe(1);
+  });
+  test("overlapping pickers cannot replace or orphan a selected helper", async () => {
+    const f = await fixture();
+    const gate = deferred<Awaited<ReturnType<FakeController["windows"]>>>();
+    f.controller.windows = async () => gate.promise;
+    const first = f.service.windows(); await settle();
+    await expect(f.service.windows()).rejects.toThrow("Wait");
+    expect(() => f.start()).toThrow("selection");
+    gate.resolve([{ id: "native:42:1000", app: "Editor", title: "Document" }]);
+    expect(await first).toHaveLength(1);
+  });
+});
 afterEach(async () => { await Promise.all(services.splice(0).map(s => s.shutdown())); });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => resolve = r); return { resolve, promise }; }
 const settle = () => Bun.sleep(10);
@@ -27,7 +107,7 @@ class FakeController implements Controller {
   enabled = false; changed = true; cancelled = false; acts = 0; observations = 0;
   failure?: Error; actGate?: Promise<{ performed: true }>;
   async windows() { return [{ id: "native:42:1000", app: "Editor", title: "Document" }]; }
-  async bind() {}
+  async bind(): Promise<Binding | void> {}
   async guard() { if (this.failure) throw this.failure; }
   async observe(): Promise<Observation> { this.observations++; if (this.failure) throw this.failure; return { id: String(this.observations), title: "Document", truncated: false, controls: [{ ref: "e0", name: "Word wrap", role: "checkbox", automationId: "wrap", enabled: true, editable: false, checked: this.enabled, actions: ["activate", "keys"] }] }; }
   async act(_id: string, _action: Action) { this.acts++; if (this.actGate) return this.actGate; if (this.changed) this.enabled = true; return { performed: true as const }; }
@@ -248,7 +328,9 @@ describe("local control security and existing flows", () => {
       const root = await fetch(base), html = await root.text(), token = html.match(/name="ticketpipe-token" content="([a-f0-9]+)"/)![1];
       expect(root.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
       expect(html).toContain("DOMPurify.sanitize"); expect(html).toContain(`nonce="${token}"`);
-      for (const path of ["/api/settings", "/api/fix/windows", "/api/fix/runs/missing"]) expect((await fetch(base + path)).status).toBe(403);
+      for (const path of ["/api/settings", "/api/fix/status", "/api/fix/windows", "/api/fix/runs/missing"]) expect((await fetch(base + path)).status).toBe(403);
+      expect((await fetch(base + "/api/fix/permissions", { method: "POST" })).status).toBe(403);
+      expect((await fetch(base + "/api/fix/permissions", { method: "POST", headers: { "x-ticketpipe-token": token, origin: "https://evil.example" } })).status).toBe(403);
       expect((await fetch(base + "/api/settings", { headers: { "x-ticketpipe-token": token } })).status).toBe(200);
       expect((await fetch(base + "/api/fix/runs/missing/stop", { method: "POST", headers: { "x-ticketpipe-token": token, origin: "https://evil.example" } })).status).toBe(403);
       expect((await fetch(base + "/api/draft", { method: "POST", headers: { "x-ticketpipe-token": token, "content-type": "application/json" }, body: JSON.stringify({ minutes: -1 }) })).status).toBe(400);

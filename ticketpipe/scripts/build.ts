@@ -3,9 +3,9 @@
 //   bun run build linux-x64    # one platform
 // Output: dist/
 
-import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { buildNative } from "./build-native";
+import { buildNative, type NativeTarget } from "./build-native";
 import { fixMacArchivePermissions } from "./mac-archive";
 
 const pkg = await Bun.file("package.json").json();
@@ -23,17 +23,15 @@ const TARGETS: Target[] = [
 
 const wanted = Bun.argv.slice(2);
 let targets = wanted.length ? TARGETS.filter((t) => wanted.includes(t.id)) : TARGETS;
-if (!wanted.length && process.platform !== "win32" && !process.env.TICKETPIPE_WINDOWS_HELPER) {
-  targets = targets.filter(t => t.id !== "windows-x64");
-  console.log("Windows packaging needs a controller built on Windows (TICKETPIPE_WINDOWS_HELPER). Building the macOS and Linux releases.");
-}
 
 const root = resolve(import.meta.dir, "..");
 const dist = resolve(root, "dist");
 if (dist !== root + sep + "dist") throw new Error("Invalid output directory");
 if (!targets.length || wanted.some(id => !TARGETS.some(t => t.id === id))) throw new Error("Unknown build target");
-const helper = targets.some(t => t.id === "windows-x64") ? await buildNative() : null;
-rmSync(dist, { recursive: true, force: true });
+// Preflight every helper before changing output; never emit a partial unsupported release.
+const helpers = new Map<string,string>();
+for (const target of targets) helpers.set(target.id, await buildNative(target.id as NativeTarget));
+if (targets.some(t => t.mac) && process.platform !== "darwin") throw new Error("Private Mac .app signing must finish on macOS. Build the Mac release on a Mac with its matching helper; ad-hoc signing needs no developer account.");
 mkdirSync("dist", { recursive: true });
 
 for (const t of targets) {
@@ -42,9 +40,9 @@ for (const t of targets) {
   const result = await Bun.build({
     entrypoints: ["src/app.ts"], minify: true,
     compile: { target: t.bun as Bun.Build.CompileTarget, outfile: out, autoloadDotenv: false },
-    plugins: t.id === "windows-x64" ? [{ name: "embedded-windows-controller", setup(build) {
-      build.onLoad({ filter: /[\\/]fix[\\/]helper-asset\.ts$/ }, () => ({ contents: `import executable from ${JSON.stringify(helper)} with { type: "file" }; export const embeddedHelper = executable;`, loader: "ts" }));
-    } }] : [],
+    plugins: [{ name: "native-controller", setup(build) {
+      build.onLoad({ filter: /[\\/]fix[\\/]helper-asset\.ts$/ }, () => ({ contents: t.mac ? `export const embeddedHelper = null; export const bundledHelper = true;` : `import executable from ${JSON.stringify(helpers.get(t.id))} with { type: "file" }; export const embeddedHelper = executable; export const bundledHelper = false;`, loader: "ts" }));
+    } }],
   });
   if (!result.success) throw new Error(result.logs.map(String).join("\n"));
 
@@ -54,6 +52,9 @@ for (const t of targets) {
     mkdirSync(`${bundle}/MacOS`, { recursive: true });
     renameSync(out, `${bundle}/MacOS/${NAME}`);
     chmodSync(`${bundle}/MacOS/${NAME}`, 0o755);
+    mkdirSync(`${bundle}/Helpers`, { recursive: true });
+    copyFileSync(helpers.get(t.id)!, `${bundle}/Helpers/ticketpipe-controller`);
+    chmodSync(`${bundle}/Helpers/ticketpipe-controller`, 0o755);
     writeFileSync(
       `${bundle}/Info.plist`,
       `<?xml version="1.0" encoding="UTF-8"?>
@@ -66,11 +67,17 @@ for (const t of targets) {
   <key>CFBundleShortVersionString</key><string>${pkg.version}</string>
   <key>CFBundleExecutable</key><string>${NAME}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><false/>
 </dict></plist>
 `,
     );
+    for (const path of [`${bundle}/Helpers/ticketpipe-controller`, `${bundle}/MacOS/${NAME}`, `${bundle}/..`]) {
+      const signing = Bun.spawn(["/usr/bin/codesign", "--force", "--sign", "-", "--identifier", path.endsWith("ticketpipe-controller") ? "dev.hackathon.ticketpipe.controller" : "dev.hackathon.ticketpipe", path], { stdio: ["ignore", "inherit", "inherit"] });
+      if (await signing.exited !== 0) throw new Error("Private Mac ad-hoc signing failed.");
+    }
+    const verification = Bun.spawn(["/usr/bin/codesign", "--verify", "--deep", "--strict", `${bundle}/..`], { stdio: ["ignore", "inherit", "inherit"] });
+    if (await verification.exited !== 0) throw new Error("Mac bundle signature verification failed.");
     const zip = Bun.which("zip");
     const archive = Bun.spawn(zip ? [zip, "-qry", `../${NAME}-${t.id}.zip`, `${APP}.app`] : ["tar", "-a", "-cf", `../${NAME}-${t.id}.zip`, `${APP}.app`], { cwd: resolve(dist, t.id), stdio: ["ignore", "inherit", "inherit"] });
     if (await archive.exited !== 0) throw new Error("Unable to archive the macOS bundle (requires zip or tar).");

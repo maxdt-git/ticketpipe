@@ -30,7 +30,7 @@ export type Draft = {
   contextSent: string;
 };
 
-export type HelpResult = { help: Help; stats: Stats; contextSent: string; incidentId: string; automation: { available: boolean; reason: string } };
+export type HelpResult = { help: Help; stats: Stats; contextSent: string; incidentId: string; automation: import("./fix/contracts").FixStatus };
 
 function deepRedact<T>(value: T): T {
   if (value instanceof Date) return new Date(value) as T;

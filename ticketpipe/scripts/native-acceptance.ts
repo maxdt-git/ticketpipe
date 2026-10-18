@@ -1,5 +1,5 @@
 // Opt-in acceptance fixture. These deterministic checks are never used by the repair agent.
-import { WindowsController } from "../src/fix/controller";
+import { NativeController } from "../src/fix/controller";
 import { evaluateChecks } from "../src/fix/policy";
 import { strict as assert } from "node:assert";
 
@@ -7,12 +7,15 @@ const title = "Repair controller acceptance";
 const token = crypto.randomUUID();
 let results: string[] = [], running = false;
 async function checks() {
-  const c = new WindowsController(), signal = new AbortController().signal;
+  const c = new NativeController(), signal = new AbortController().signal;
   const passed = (message: string) => { results.push(message); console.log(message); };
   try {
     const matches = (await c.windows()).filter(w => w.title.startsWith(title));
     assert.equal(matches.length, 1, "Keep exactly one acceptance page in the foreground");
-    await c.bind(matches[0].id, signal);
+    let binding = await c.bind(matches[0].id, signal);
+    const deadline = Date.now() + 15_000;
+    while (binding.state === "awaiting_focus" && Date.now() < deadline) { await Bun.sleep(150); binding = await c.focus(signal); }
+    assert.equal(binding.state, "ready", "Bring the selected acceptance window forward within 15 seconds");
     let observation = await c.observe(signal);
     assert(!observation.controls.some(x => (x.name === "Password" && x.role === "edit") || x.value === "test-only-secret"), "Protected fields must not be exposed");
     passed("PASS: protected fields omitted from observations");
@@ -22,13 +25,13 @@ async function checks() {
     await assert.rejects(c.act(observation.id, { kind: "activate", ref: wrap.ref }, signal));
     observation = await c.observe(signal);
     assert(evaluateChecks([{ name: "Wrap long lines", property: "checked", equals: true }], observation).passed);
-    passed("PASS: real UIA activation, consumed observation, independent success check");
+    passed("PASS: native activation, consumed observation, independent success check");
     const field = observation.controls.find(x => x.name === "Document title" && x.editable);
-    assert(field, "Text field must expose ValuePattern");
+    assert(field, "Text field must expose editable accessibility operations");
     await c.act(observation.id, { kind: "text", ref: field.ref, text: "Acceptance document" }, signal);
     await Bun.sleep(200);
     observation = await c.observe(signal);
-    assert(evaluateChecks([{ name: "Document title", role: "edit", property: "value", equals: "Acceptance document" }], observation).passed, "Editable field value must match");
+    assert(evaluateChecks([{ name: "Document title", role: field.role, property: "value", equals: "Acceptance document" }], observation).passed, "Editable field value must match");
     passed("PASS: real editable-field input and value verification");
     const danger = observation.controls.find(x => x.name === "Delete account"); assert(danger);
     await assert.rejects(c.act(observation.id, { kind: "activate", ref: danger.ref }, signal));
@@ -42,8 +45,8 @@ async function checks() {
     const fresh = await c.observe(signal); await c.cancel();
     await assert.rejects(async () => c.act(fresh.id, { kind: "activate", ref: liveWrap.ref }, signal));
     passed("PASS: Stop revokes the controller and prevents later actions");
-    const replaced = new WindowsController();
-    try { await assert.rejects(replaced.bind(matches[0].id.replace(/:\d+$/, ":0"), signal)); passed("PASS: replaced process identity rejected"); }
+    const replaced = new NativeController();
+    try { await assert.rejects(replaced.bind(matches[0].id + ":replaced", signal)); passed("PASS: invalid or replaced target identity rejected"); }
     finally { await replaced.close(); }
   } catch (error) { results.push(`FAIL: ${error instanceof Error ? error.message : error}`); console.error(results.at(-1)); }
   finally { await c.close(); running = false; }

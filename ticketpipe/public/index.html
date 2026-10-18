@@ -446,6 +446,7 @@
       <ol class="checklist" id="checklist"></ol>
       <div class="row" id="fixActions"></div>
       <p class="hint" id="automationReason"></p>
+      <div class="actions"><button class="btn hidden" id="automationSetup">Set up accessibility</button><button class="btn hidden" id="automationRefresh">Check automatic fixing again</button></div>
       <section id="repairPanel" class="hidden" style="margin-top:24px" aria-label="Automatic repair">
         <h2 id="repairTitle">TicketPipe is trying</h2>
         <p id="repairProgress" role="status" aria-live="polite"></p>
@@ -913,7 +914,7 @@ const repairActive = () => starting || ["running", "verifying"].includes(repairR
 const manualSteps = () => $$("#checklist input").flatMap((input, i) => input.checked ? [i] : []);
 function lockRepair() {
   const active = repairActive();
-  $$("#navTicket, #navFix, #navSettings, #home, #fixActions button, #checklist input").forEach(b => b.disabled = active);
+  $$("#navTicket, #navFix, #navSettings, #home, #fixActions button, #checklist input, #automationSetup, #automationRefresh").forEach(b => b.disabled = active);
   if ($("#autoTry")) $("#autoTry").disabled = active || !helpResult?.automation.available;
 }
 async function quickFix() {
@@ -945,9 +946,25 @@ async function quickFix() {
       <button class="btn" id="backAsk">Back</button>`;
   }
   $("#automationReason").textContent = res.automation.reason;
+  $("#automationSetup").classList.toggle("hidden", !res.automation.setup);
+  $("#automationRefresh").classList.toggle("hidden", !h.solvable);
   lockRepair();
   show("v-fix");
 }
+async function refreshAutomation(setup = false) {
+  if (!helpResult || repairActive()) return;
+  $("#automationSetup").disabled = true; $("#automationRefresh").disabled = true;
+  try {
+    const readiness = await api(setup ? "/api/fix/permissions" : "/api/fix/status", setup ? {} : undefined);
+    helpResult.automation = { ...readiness, available: readiness.available && helpResult.help.solvable };
+    $("#automationReason").textContent = readiness.reason;
+    $("#automationSetup").classList.toggle("hidden", !readiness.setup);
+  } catch (e) { $("#automationReason").textContent = e.message; }
+  finally { lockRepair(); }
+}
+$("#automationSetup").onclick = () => refreshAutomation(true);
+$("#automationRefresh").onclick = () => refreshAutomation();
+window.addEventListener("focus", () => { if (helpResult && !repairActive() && !$("#v-fix").classList.contains("hidden")) void refreshAutomation(); });
 $("#fixActions").addEventListener("click", (e) => {
   if (repairActive()) return;
   if (e.target.id === "autoTry") return chooseWindow();
@@ -1018,7 +1035,7 @@ function renderRepair(run) {
   $("#repairProgress").textContent = run.progress;
   const waitingForAi = active && ["planning", "deciding"].includes(run.phase);
   const phaseSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(run.phaseStartedAt)) / 1000));
-  $("#repairTiming").textContent = waitingForAi ? `Waiting for the AI · ${phaseSeconds}s (up to 45s per request)` : "";
+  $("#repairTiming").textContent = active && run.phase === "awaiting_focus" ? `Bring ${run.window.app} — ${run.window.title} forward · ${Math.max(0, 15 - phaseSeconds)}s remaining` : waitingForAi ? `Waiting for the AI · ${phaseSeconds}s (up to 45s per request)` : "";
   $("#repairHistory").innerHTML = run.actions.map(a => `<li>${esc(a.description)} <small>(${esc(a.state)})</small>${a.observed ? `<p class="hint">${esc(a.observed)}</p>` : ""}</li>`).join("");
   $("#repairStop").classList.toggle("hidden", !active);
   $("#repairConfirm").classList.toggle("hidden", active || ["verified_fixed", "user_reported_fixed"].includes(run.status));

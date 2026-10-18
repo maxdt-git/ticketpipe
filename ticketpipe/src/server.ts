@@ -158,6 +158,8 @@ export function startServer(port = config.port) {
           return json({ ok: openExternal(target) });
         }),
       },
+      "/api/fix/status": { GET: protectedRoute(async () => json(await fixes.assessAvailability())) },
+      "/api/fix/permissions": { POST: protectedRoute(async () => json(await fixes.permissions())) },
       "/api/fix/windows": { GET: protectedRoute(async () => json({ windows: await fixes.windows() })) },
       "/api/fix/runs": { POST: protectedRoute(async req => {
         const body = await req.json();
