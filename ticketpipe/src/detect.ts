@@ -19,6 +19,11 @@ function candidates(): string[] {
     join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "screenpipe", "screenpipe.exe"),
     join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "Programs", "screenpipe", "screenpipe.exe"),
   ];
+  // Current Windows installs keep their CLI in a versioned per-user directory.
+  const cli = join(home, ".screenpipe", "cli");
+  try {
+    for (const version of readdirSync(cli).sort().reverse()) list.push(join(cli, version, process.platform === "win32" ? "screenpipe.exe" : "screenpipe"));
+  } catch {}
   // Copies downloaded by `bunx screenpipe` / `npx screenpipe`.
   for (const tmp of ["/tmp", process.env.TMPDIR ?? ""].filter(Boolean)) {
     try {

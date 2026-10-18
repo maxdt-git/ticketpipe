@@ -6,6 +6,7 @@
 <title>TicketPipe</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cpath d='M18 16h-6v32h6M46 16h6v32h-6' stroke='%23fff' stroke-width='5' fill='none'/%3E%3Crect x='24' y='29' width='16' height='6' fill='%23fff'/%3E%3C/svg%3E" />
 <script src="/vendor/marked.js"></script>
+<script src="/vendor/purify.js"></script>
 <style>
   :root {
     --bg: #FFFFFF;
@@ -444,6 +445,18 @@
       <p class="diag" id="diag"></p>
       <ol class="checklist" id="checklist"></ol>
       <div class="row" id="fixActions"></div>
+      <p class="hint" id="automationReason"></p>
+      <section id="repairPanel" class="hidden" style="margin-top:24px" aria-label="Automatic repair">
+        <h2 id="repairTitle">TicketPipe is trying</h2>
+        <p id="repairProgress" role="status" aria-live="polite"></p>
+        <p class="hint" id="repairTiming"></p>
+        <ol id="repairHistory"></ol>
+        <div class="row">
+          <button class="btn" id="repairStop" style="position:fixed;bottom:24px;right:24px;z-index:1000">Stop</button>
+          <button class="btn hidden" id="repairConfirm">I checked: it works now</button>
+        </div>
+        <p class="result bad" id="repairError" role="alert"></p>
+      </section>
     </div>
   </section>
 
@@ -460,6 +473,21 @@
     </div>
   </section>
 </main>
+
+<dialog id="windowPicker" aria-labelledby="windowPickerTitle">
+  <div class="dlg-head"><h2 id="windowPickerTitle">Choose the application to repair</h2></div>
+  <div class="dlg-body">
+    <p>TicketPipe will bring this window forward and control its accessible controls. Keep it in front while the attempt runs. Switching to another application stops the attempt.</p>
+    <p class="hint">The configured AI receives masked live control text and the original incident. No screenshots are sent. Stop is always available in TicketPipe.</p>
+    <label class="field"><span>Open application</span><select id="repairWindow"><option value="">Loading windows…</option></select></label>
+    <p class="result bad" id="windowError" role="alert"></p>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" id="windowRefresh">Refresh</button>
+    <button class="btn" id="windowCancel">Cancel</button>
+    <button class="btn primary" id="windowStart" disabled>Let TicketPipe try</button>
+  </div>
+</dialog>
 
 <!-- ======================= SETTINGS ======================= -->
 <dialog id="settings" aria-labelledby="settingsTitle">
@@ -526,8 +554,9 @@
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const token = $('meta[name="ticketpipe-token"]').content;
 const api = async (path, body) => {
-  const res = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const res = await fetch(path, { headers: { "x-ticketpipe-token": token, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -583,7 +612,7 @@ function fillForm(root, s) {
   }
   const current = presetOf(s);
   if (box) $(`input[value="${current.id}"]`, box).checked = true;
-  applyPreset(root, current.id, false);
+  applyPreset(root, current.id, !s.llmPreset && !s.llmApiKey && s.llmProvider !== "mock");
   const dest = s.githubRepo ? "github" : "folder";
   $$("[data-dest]", root).forEach((r) => {
     r.checked = r.value === dest;
@@ -731,7 +760,7 @@ const COPY = {
   ticket: { title: "What went wrong?", lede: "A few words are enough. Your computer already saw the rest.",
     go: "Create ticket", ph: "I can't connect to the VPN since this morning",
     switch: 'Might be something simple? <button class="link" data-switch="fix">Try a quick fix first</button>',
-    privacy: "Nothing is sent until you review the ticket. Passwords, keys, emails and card numbers are masked on this computer first.",
+    privacy: "The configured AI receives masked screen text to draft your ticket. Review and approve the ticket before anything is sent to IT.",
     work: "Writing your ticket", p2: "writing a clear ticket for IT" },
   fix: { title: "Let's try to fix it.", lede: "Describe the problem. TicketPipe looks at your screen and suggests simple steps you can do yourself.",
     go: "Find a fix", ph: "My printer stopped working",
@@ -741,6 +770,7 @@ const COPY = {
 };
 const minutes = () => +$('input[name="min"]:checked').value;
 function ask(m, keepNote = false) {
+  if (repairActive()) return;
   mode = m;
   const c = COPY[m];
   $("#askTitle").textContent = c.title; $("#askLede").textContent = c.lede; $("#go").textContent = c.go;
@@ -787,10 +817,10 @@ function go() { return mode === "fix" ? quickFix() : createTicket(); }
 
 // ------------------------------------------------------------ ticket
 let draft = null;
-async function createTicket(noteOverride) {
+async function createTicket(noteOverride, references = {}) {
   mode = "ticket";
   const note = noteOverride ?? $("#note").value;
-  try { draft = await withProgress((m) => api("/api/draft", { minutes: m, note })); } catch { return; }
+  try { draft = await withProgress((m) => api("/api/draft", { minutes: m, note, ...references })); } catch { return; }
   renderReview();
 }
 
@@ -800,7 +830,8 @@ const tz = () => { const m = -new Date().getTimezoneOffset(), a = Math.abs(m); r
 
 function renderPreview() {
   const md = $("#bodyEdit").value;
-  $("#preview").innerHTML = maskify(window.marked ? marked.parse(md) : `<pre>${esc(md)}</pre>`);
+  const html = window.marked && window.DOMPurify ? DOMPurify.sanitize(maskify(marked.parse(md)), { USE_PROFILES: { html: true }, FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "iframe"], FORBID_ATTR: ["style", "id", "name"] }) : `<pre>${esc(md)}</pre>`;
+  $("#preview").innerHTML = html;
 }
 function renderReview() {
   const d = draft, st = d.stats;
@@ -876,13 +907,24 @@ $("#send").onclick = async () => {
 $("#another").onclick = () => ask("ticket");
 
 // ------------------------------------------------------------ quick fix
-let lastFixNote = "", lastHelp = null;
+let lastFixNote = "", lastHelp = null, helpResult = null, repairRun = null;
+let repairPoll, repairLease, polling = false, starting = false;
+const repairActive = () => starting || ["running", "verifying"].includes(repairRun?.status);
+const manualSteps = () => $$("#checklist input").flatMap((input, i) => input.checked ? [i] : []);
+function lockRepair() {
+  const active = repairActive();
+  $$("#navTicket, #navFix, #navSettings, #home, #fixActions button, #checklist input").forEach(b => b.disabled = active);
+  if ($("#autoTry")) $("#autoTry").disabled = active || !helpResult?.automation.available;
+}
 async function quickFix() {
   mode = "fix";
   lastFixNote = $("#note").value;
   let res;
   try { res = await withProgress((m) => api("/api/help", { minutes: m, note: lastFixNote })); } catch { return; }
   lastHelp = res.help;
+  helpResult = res; repairRun = null;
+  $("#repairPanel").classList.add("hidden");
+  $("#repairError").textContent = "";
   const h = res.help;
   $("#diag").innerHTML = maskify(esc(h.diagnosis));
   if (h.solvable) {
@@ -892,6 +934,7 @@ async function quickFix() {
       `<li><label><input type="checkbox" /><span>${maskify(esc(s))}</span></label></li>`).join("");
     $("#checklist").classList.remove("hidden");
     $("#fixActions").innerHTML = `<button class="btn primary" id="fixed">It works now</button>
+      <button class="btn" id="autoTry">Let TicketPipe try</button>
       <button class="btn" id="stillBroken">Still broken, create a ticket</button>`;
   } else {
     $("#verdict").className = "verdict it"; $("#verdict").textContent = "needs IT";
@@ -901,9 +944,13 @@ async function quickFix() {
     $("#fixActions").innerHTML = `<button class="btn primary" id="stillBroken">Create a ticket</button>
       <button class="btn" id="backAsk">Back</button>`;
   }
+  $("#automationReason").textContent = res.automation.reason;
+  lockRepair();
   show("v-fix");
 }
 $("#fixActions").addEventListener("click", (e) => {
+  if (repairActive()) return;
+  if (e.target.id === "autoTry") return chooseWindow();
   if (e.target.id === "fixed") {
     $("#doneTick").textContent = "✓ fixed";
     $("#doneTitle").textContent = "Glad it works again";
@@ -914,17 +961,92 @@ $("#fixActions").addEventListener("click", (e) => {
   }
   if (e.target.id === "stillBroken") {
     // Hand everything over to the ticket, including what the user already tried.
-    const tried = lastHelp?.solvable ? $$("#checklist li").filter((li) => $("input", li).checked).map((li) => li.textContent.trim().replace(/[.\s]+$/, "")) : [];
-    const note = [lastFixNote.trim(), tried.length ? `I already tried: ${tried.join("; ")}.` : ""].filter(Boolean).join(" ");
-    $("#note").value = note;
-    createTicket(note);
+    createTicket(lastFixNote, { incidentId: helpResult.incidentId, manualSteps: manualSteps(), ...(repairRun ? { fixRunId: repairRun.id } : {}) });
   }
   if (e.target.id === "backAsk") ask("fix", true);
 });
 
+const picker = $("#windowPicker");
+async function chooseWindow() {
+  if (repairActive()) return;
+  picker.showModal(); await loadWindows();
+}
+async function loadWindows() {
+  $("#windowStart").disabled = true; $("#windowRefresh").disabled = true;
+  $("#windowError").textContent = "";
+  $("#repairWindow").innerHTML = '<option value="">Choose a window…</option>';
+  try {
+    const result = await api("/api/fix/windows");
+    for (const w of result.windows) $("#repairWindow").add(new Option(`${w.app} — ${w.title}`, w.id));
+    if (!result.windows.length) $("#windowError").textContent = "No eligible application windows are open. Open the app you want to repair, then refresh.";
+  } catch (e) { $("#windowError").textContent = e.message; }
+  finally { $("#windowRefresh").disabled = false; }
+}
+$("#repairWindow").onchange = () => $("#windowStart").disabled = !$("#repairWindow").value || starting;
+$("#windowRefresh").onclick = loadWindows;
+$("#windowCancel").onclick = () => { if (!starting) picker.close(); };
+picker.addEventListener("cancel", e => { if (starting) e.preventDefault(); });
+$("#windowStart").onclick = async () => {
+  if (repairActive() || !$("#repairWindow").value) return;
+  const windowId = $("#repairWindow").value;
+  starting = true; lockRepair(); $("#windowStart").disabled = true;
+  // Close and restore dialog focus before the server foregrounds the selected app.
+  picker.close();
+  $("#repairPanel").classList.remove("hidden");
+  $("#repairTitle").textContent = "Starting repair";
+  $("#repairProgress").textContent = "Connecting to the selected application…";
+  $("#repairTiming").textContent = "";
+  $("#repairStop").classList.add("hidden");
+  $("#repairConfirm").classList.add("hidden");
+  $("#repairError").textContent = "";
+  try {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    repairRun = await api("/api/fix/runs", { incidentId: helpResult.incidentId, windowId, manualSteps: manualSteps() });
+    renderRepair(repairRun);
+    clearInterval(repairPoll); clearInterval(repairLease);
+    repairPoll = setInterval(pollRepair, 1000);
+    repairLease = setInterval(() => api(`/api/fix/runs/${repairRun.id}/heartbeat`, {}).catch(e => { $("#repairError").textContent = e.message; }), 4000);
+  } catch (e) { $("#repairTitle").textContent = "Could not start"; $("#repairError").textContent = e.message; }
+  finally { starting = false; lockRepair(); $("#windowStart").disabled = !$("#repairWindow").value; }
+};
+function renderRepair(run) {
+  repairRun = run;
+  const active = ["running", "verifying"].includes(run.status);
+  const titles = { running: "TicketPipe is trying", verifying: "Checking the result", verified_fixed: "Verified fixed", user_reported_fixed: "Fixed — confirmed by you", unresolved: "Still unresolved", needs_user: "Needs your help", stopped: "Attempt stopped" };
+  $("#repairPanel").classList.remove("hidden");
+  $("#repairTitle").textContent = titles[run.status] || "Repair attempt";
+  $("#repairProgress").textContent = run.progress;
+  const waitingForAi = active && ["planning", "deciding"].includes(run.phase);
+  const phaseSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(run.phaseStartedAt)) / 1000));
+  $("#repairTiming").textContent = waitingForAi ? `Waiting for the AI · ${phaseSeconds}s (up to 45s per request)` : "";
+  $("#repairHistory").innerHTML = run.actions.map(a => `<li>${esc(a.description)} <small>(${esc(a.state)})</small>${a.observed ? `<p class="hint">${esc(a.observed)}</p>` : ""}</li>`).join("");
+  $("#repairStop").classList.toggle("hidden", !active);
+  $("#repairConfirm").classList.toggle("hidden", active || ["verified_fixed", "user_reported_fixed"].includes(run.status));
+  if (!active) { clearInterval(repairPoll); clearInterval(repairLease); }
+  lockRepair();
+}
+async function pollRepair() {
+  if (polling || !repairRun) return;
+  polling = true;
+  try { renderRepair(await api(`/api/fix/runs/${repairRun.id}`)); }
+  catch (e) { $("#repairError").textContent = `${e.message} Stop remains available; a disconnected attempt stops automatically.`; }
+  finally { polling = false; }
+}
+$("#repairStop").onclick = async () => {
+  try { renderRepair(await api(`/api/fix/runs/${repairRun.id}/stop`, {})); }
+  catch (e) { $("#repairError").textContent = e.message; }
+};
+$("#repairConfirm").onclick = async () => {
+  try { renderRepair(await api(`/api/fix/runs/${repairRun.id}/confirm`, {})); }
+  catch (e) { $("#repairError").textContent = e.message; }
+};
+window.addEventListener("pagehide", () => {
+  if (repairActive() && repairRun) void fetch(`/api/fix/runs/${repairRun.id}/stop`, { method: "POST", headers: { "x-ticketpipe-token": token }, keepalive: true });
+});
+
 // ------------------------------------------------------------ settings dialog
 const dlg = $("#settings");
-function openSettings() { fillForm(dlg, settings); dlg.showModal(); }
+function openSettings() { if (repairActive()) return; fillForm(dlg, settings); dlg.showModal(); }
 $("#settingsCancel").onclick = () => dlg.close();
 $("#settingsX").onclick = () => dlg.close();
 $("#settingsSave").onclick = async () => {

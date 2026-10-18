@@ -1,6 +1,7 @@
 // Turn the (redacted) context into a structured IT ticket, or into self-help steps, with an LLM.
 
 import { config } from "./config";
+import { callLlm } from "./llm";
 import type { Context } from "./context";
 import { localDateTime, localTime, utcOffsetLabel } from "./time";
 
@@ -158,69 +159,11 @@ function userPrompt(ctx: Context, contextText: string, note: string, mode: "tick
 
 // ---------------------------------------------------------------- providers
 
-async function callAnthropic(system: string, user: string, maxTokens = 2000): Promise<string> {
-  if (!config.llmApiKey) throw new Error("No AI key set. Open Settings and add your Anthropic key.");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": config.llmApiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: config.llmModel,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: user }],
-    }),
-  });
-  if (!res.ok) throw new Error(`AI provider (Anthropic) → HTTP ${res.status}: ${(await res.text()).slice(0, 400)}`);
-  const json = (await res.json()) as { content: { type: string; text?: string }[] };
-  return json.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text ?? "")
-    .join("");
-}
-
-async function callOpenAI(system: string, user: string): Promise<string> {
-  const local = /localhost|127\.0\.0\.1/.test(config.llmBaseUrl);
-  if (!config.llmApiKey && !local) throw new Error("No AI key set. Open Settings and add your key.");
-  const send = (jsonMode: boolean) =>
-    fetch(`${config.llmBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        ...(config.llmApiKey ? { Authorization: `Bearer ${config.llmApiKey}` } : {}),
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.llmModel,
-        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-      }),
-    });
-  let res = await send(true);
-  // Some OpenAI-compatible providers reject JSON mode: retry without it (we parse the JSON ourselves).
-  if (res.status === 400) {
-    const body = await res.text();
-    if (!/response_format|json/i.test(body)) throw new Error(`AI provider → HTTP 400: ${body.slice(0, 400)}`);
-    res = await send(false);
-  }
-  if (!res.ok) throw new Error(`AI provider → HTTP ${res.status}: ${(await res.text()).slice(0, 400)}`);
-  const json = (await res.json()) as { choices: { message: { content: string } }[] };
-  return json.choices[0]?.message?.content ?? "";
-}
-
-const callLlm = (system: string, user: string) =>
-  config.llmProvider === "openai" ? callOpenAI(system, user) : callAnthropic(system, user);
-
 /** Tiny round-trip used by the "Test" button in Settings. */
 export async function testLlm(): Promise<string> {
   if (config.llmProvider === "mock") return "the demo AI";
   const system = 'Reply with exactly this JSON and nothing else: {"ok": true}';
-  const raw = config.llmProvider === "openai" ? await callOpenAI(system, "ping") : await callAnthropic(system, "ping", 50);
+  const raw = await callLlm(system, "ping", { maxTokens: 50 });
   if (!raw.includes("ok")) throw new Error(`Unexpected answer: ${raw.slice(0, 120)}`);
   return config.llmModel;
 }

@@ -3,8 +3,10 @@
 //   bun run build linux-x64    # one platform
 // Output: dist/
 
-import { $ } from "bun";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { resolve, sep } from "node:path";
+import { buildNative } from "./build-native";
+import { fixMacArchivePermissions } from "./mac-archive";
 
 const pkg = await Bun.file("package.json").json();
 const NAME = "ticketpipe";
@@ -20,25 +22,37 @@ const TARGETS: Target[] = [
 ];
 
 const wanted = Bun.argv.slice(2);
-const targets = wanted.length ? TARGETS.filter((t) => wanted.includes(t.id)) : TARGETS;
+let targets = wanted.length ? TARGETS.filter((t) => wanted.includes(t.id)) : TARGETS;
+if (!wanted.length && process.platform !== "win32" && !process.env.TICKETPIPE_WINDOWS_HELPER) {
+  targets = targets.filter(t => t.id !== "windows-x64");
+  console.log("Windows packaging needs a controller built on Windows (TICKETPIPE_WINDOWS_HELPER). Building the macOS and Linux releases.");
+}
 
-rmSync("dist", { recursive: true, force: true });
+const root = resolve(import.meta.dir, "..");
+const dist = resolve(root, "dist");
+if (dist !== root + sep + "dist") throw new Error("Invalid output directory");
+if (!targets.length || wanted.some(id => !TARGETS.some(t => t.id === id))) throw new Error("Unknown build target");
+const helper = targets.some(t => t.id === "windows-x64") ? await buildNative() : null;
+rmSync(dist, { recursive: true, force: true });
 mkdirSync("dist", { recursive: true });
 
 for (const t of targets) {
   process.stdout.write(`→ ${t.id.padEnd(12)} `);
   const out = `dist/${t.exe}`;
-  const res = await $`bun build src/app.ts --compile --minify --target=${t.bun} --outfile ${out}`.quiet().nothrow();
-  if (res.exitCode !== 0) {
-    console.log(`failed\n${res.stderr.toString().slice(0, 600)}`);
-    continue;
-  }
+  const result = await Bun.build({
+    entrypoints: ["src/app.ts"], minify: true,
+    compile: { target: t.bun as Bun.Build.CompileTarget, outfile: out, autoloadDotenv: false },
+    plugins: t.id === "windows-x64" ? [{ name: "embedded-windows-controller", setup(build) {
+      build.onLoad({ filter: /[\\/]fix[\\/]helper-asset\.ts$/ }, () => ({ contents: `import executable from ${JSON.stringify(helper)} with { type: "file" }; export const embeddedHelper = executable;`, loader: "ts" }));
+    } }] : [],
+  });
+  if (!result.success) throw new Error(result.logs.map(String).join("\n"));
 
   if (t.mac) {
     // Wrap in a .app bundle so it opens with a double-click and shows a proper name.
     const bundle = `dist/${t.id}/${APP}.app/Contents`;
     mkdirSync(`${bundle}/MacOS`, { recursive: true });
-    await $`mv ${out} ${bundle}/MacOS/${NAME}`.quiet();
+    renameSync(out, `${bundle}/MacOS/${NAME}`);
     chmodSync(`${bundle}/MacOS/${NAME}`, 0o755);
     writeFileSync(
       `${bundle}/Info.plist`,
@@ -57,8 +71,13 @@ for (const t of targets) {
 </dict></plist>
 `,
     );
-    await $`cd dist/${t.id} && zip -qry ../${NAME}-${t.id}.zip ${APP}.app`.quiet();
-    rmSync(`dist/${t.id}`, { recursive: true, force: true });
+    const zip = Bun.which("zip");
+    const archive = Bun.spawn(zip ? [zip, "-qry", `../${NAME}-${t.id}.zip`, `${APP}.app`] : ["tar", "-a", "-cf", `../${NAME}-${t.id}.zip`, `${APP}.app`], { cwd: resolve(dist, t.id), stdio: ["ignore", "inherit", "inherit"] });
+    if (await archive.exited !== 0) throw new Error("Unable to archive the macOS bundle (requires zip or tar).");
+    if (process.platform === "win32") await fixMacArchivePermissions(resolve(dist, `${NAME}-${t.id}.zip`));
+    const temporary = resolve(dist, t.id);
+    if (!temporary.startsWith(dist + sep)) throw new Error("Invalid bundle directory");
+    rmSync(temporary, { recursive: true, force: true });
     console.log(`dist/${NAME}-${t.id}.zip`);
   } else {
     console.log(out);

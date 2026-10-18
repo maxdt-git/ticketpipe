@@ -4,3 +4,4 @@ out/
 fixtures/snapshot-*.json
 .DS_Store
 dist/
+.bun-cache/

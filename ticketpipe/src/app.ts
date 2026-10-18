@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { APP_NAME, appDataDir, applyDemoFlag, config, loadSettings } from "./config";
 import { openExternal } from "./open";
 import { autoDetectKey, isAppRunningOn, lastPing, startServer } from "./server";
+import { fixes } from "./fix/runner";
+import { WindowsController } from "./fix/controller";
 
 const WINDOW = { width: 1120, height: 820 };
 
@@ -72,8 +74,8 @@ function openWindow(url: string) {
       "--no-default-browser-check",
       "--disable-features=Translate",
     ],
-    { stdio: ["ignore", "ignore", "ignore"] },
-  );
+    { stdio: ["ignore", "ignore", "ignore"], detached: true },
+  ).unref();
 }
 
 // ---------------------------------------------------------------- Linux: add to the applications menu
@@ -97,6 +99,16 @@ function installLinuxLauncher() {
 }
 
 // ---------------------------------------------------------------- main
+
+if (process.argv.includes("--check-controller")) {
+  const controller = new WindowsController();
+  try {
+    if (process.platform !== "win32") console.log(JSON.stringify({ platform: process.platform, available: false }));
+    else console.log(JSON.stringify({ platform: process.platform, available: true, eligibleWindows: (await controller.windows()).length }));
+  } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
+  finally { await controller.close(); }
+  process.exit(process.exitCode ?? 0);
+}
 
 if (process.argv.includes("--install")) {
   if (process.platform === "linux") installLinuxLauncher();
@@ -127,12 +139,14 @@ openWindow(url);
 
 // Quit when the window has been closed: the page pings every few seconds while it's open.
 const started = Date.now();
+let closing = false;
+const close = async () => { if (closing) return; closing = true; await fixes.shutdown(); server.stop(true); process.exit(0); };
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => { void close(); });
 setInterval(() => {
   const now = Date.now();
   const neverOpened = lastPing === 0 && now - started > 120_000;
   const closed = lastPing !== 0 && now - lastPing > 20_000;
   if (neverOpened || closed) {
-    server.stop(true);
-    process.exit(0);
+    void close();
   }
 }, 5_000);

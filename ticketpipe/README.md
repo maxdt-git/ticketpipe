@@ -26,6 +26,8 @@ _(Fictional example — try it yourself with `bun run demo`.)_
 - **new ticket**: describe the problem in a few words; TicketPipe writes the ticket from what screenpipe saw: exact errors, steps, timeline (local time), a severity chosen by the AI with its reason, up to 3 possible solutions in plain language, and at most 3 questions IT may still ask.
 - **quick fix**: for everyday problems (printer, Wi-Fi, an app that froze…), TicketPipe suggests up to 5 simple steps the user can do alone. If it's not something a user should fix (expired certificate, locked account, admin rights…) it says so. If the steps don't work, one click turns it into a ticket that already lists what was tried.
 
+**Automatic fixing is available only on Windows in this release.** **Let TicketPipe try** can attempt a suggested fix in one application window you explicitly select. Progress and Stop remain available. The agent uses accessible controls and independently checks the result. Escalation preserves the original incident and actual attempt record. macOS and Linux continue to support ticket generation and manual quick-fix suggestions. See [automatic-fix runtime, limits and development](docs/automatic-fixes.md).
+
 ## How it works
 
 ```mermaid
