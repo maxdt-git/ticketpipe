@@ -559,6 +559,18 @@ const token = $('meta[name="ticketpipe-token"]').content;
 const api = async (path, body) => {
   const res = await fetch(path, { headers: { "x-ticketpipe-token": token, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }) });
   const data = await res.json().catch(() => ({}));
+  // The app was restarted while this window stayed open: its access token is stale.
+  // Reload once to get the new one (at most every 10 s, so a real 403 can't loop).
+  if (res.status === 403 && /not authorized/i.test(data.error || "")) {
+    let last = 0;
+    try { last = +sessionStorage.getItem("tp-reauth") || 0; } catch {}
+    if (Date.now() - last > 10_000) {
+      try { sessionStorage.setItem("tp-reauth", String(Date.now())); } catch {}
+      location.reload();
+      return new Promise(() => {}); // the page is reloading
+    }
+    throw new Error("TicketPipe was restarted. Close this window and open TicketPipe again.");
+  }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 };
