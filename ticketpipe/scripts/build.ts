@@ -4,19 +4,19 @@
 // Output: dist/
 
 import { $ } from "bun";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 
 const pkg = await Bun.file("package.json").json();
 const NAME = "ticketpipe";
 const APP = "TicketPipe";
 
-type Target = { id: string; bun: string; exe: string; mac?: boolean };
+type Target = { id: string; bun: string; exe: string; mac?: boolean; win?: boolean };
 const TARGETS: Target[] = [
   { id: "linux-x64", bun: "bun-linux-x64", exe: `${NAME}-linux-x64` },
   { id: "linux-arm64", bun: "bun-linux-arm64", exe: `${NAME}-linux-arm64` },
   { id: "mac-arm64", bun: "bun-darwin-arm64", exe: `${NAME}-mac-arm64`, mac: true },
   { id: "mac-x64", bun: "bun-darwin-x64", exe: `${NAME}-mac-x64`, mac: true },
-  { id: "windows-x64", bun: "bun-windows-x64", exe: `${NAME}-windows-x64.exe` },
+  { id: "windows-x64", bun: "bun-windows-x64", exe: `${NAME}-windows-x64.exe`, win: true },
 ];
 
 const wanted = Bun.argv.slice(2);
@@ -28,7 +28,10 @@ mkdirSync("dist", { recursive: true });
 for (const t of targets) {
   process.stdout.write(`→ ${t.id.padEnd(12)} `);
   const out = `dist/${t.exe}`;
-  const res = await $`bun build src/app.ts --compile --minify --target=${t.bun} --outfile ${out}`.quiet().nothrow();
+  // Bun can only embed the .exe icon when the build itself runs on Windows.
+  const icon = t.win && process.platform === "win32" ? ["--windows-icon=brand/icon.ico"] : [];
+  if (t.win && !icon.length) process.stdout.write("(no .exe icon: build on Windows to embed it) ");
+  const res = await $`bun build src/app.ts --compile --minify --target=${t.bun} ${icon} --outfile ${out}`.quiet().nothrow();
   if (res.exitCode !== 0) {
     console.log(`failed\n${res.stderr.toString().slice(0, 600)}`);
     continue;
@@ -40,11 +43,14 @@ for (const t of targets) {
     mkdirSync(`${bundle}/MacOS`, { recursive: true });
     await $`mv ${out} ${bundle}/MacOS/${NAME}`.quiet();
     chmodSync(`${bundle}/MacOS/${NAME}`, 0o755);
+    mkdirSync(`${bundle}/Resources`, { recursive: true });
+    copyFileSync("brand/icon.icns", `${bundle}/Resources/${APP}.icns`);
     writeFileSync(
       `${bundle}/Info.plist`,
       `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+  <key>CFBundleIconFile</key><string>${APP}.icns</string>
   <key>CFBundleName</key><string>${APP}</string>
   <key>CFBundleDisplayName</key><string>${APP}</string>
   <key>CFBundleIdentifier</key><string>dev.hackathon.ticketpipe</string>
