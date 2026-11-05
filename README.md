@@ -167,6 +167,4 @@ fixtures/           demo data (fictional)
 
 ## Team
 
-<!-- names / 42 logins -->
-
-Built at the screenpipe hackathon, October 2026.
+Built by a team of 5 at the screenpipe hackathon, October 2026.
