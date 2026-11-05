@@ -7,6 +7,8 @@
 
 **TicketPipe turns what your computer already saw into a precise IT ticket, or fixes simple problems on the spot.** Built on [screenpipe](https://screenpipe.com).
 
+**Stack:** TypeScript · Bun · screenpipe API · LLM structured output (JSON) · local secret redaction
+
 > _"VPN doesn't work, thanks"_ → IT replies _"Which error? Which version? Can you send a screenshot?"_ → the user has to reproduce the bug… which may not happen again.
 
 With screenpipe, the bug **has already been recorded**. One click and TicketPipe reads the last minutes of screen activity, keeps what matters, masks secrets locally, and writes the ticket an IT technician actually wants: exact error messages, steps, app version, OS, what the user already tried, and a timeline.
